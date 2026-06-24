@@ -1,0 +1,72 @@
+{
+  "nombre": "Calendario comunal EIB",
+  "descripcion_producto": "El calendario comunal es una herramienta pedagogica fundamental en Educacion Inicial EIB para ambito rural. Organiza actividades socioculturales y socioproductivas de la comunidad, saberes asociados, problemas del contexto y aliados posibles. Sirve como insumo para una planificacion curricular pertinente y para promover dialogo de saberes.",
+  "contexto_curso": "Unidad 1, sesion 2: se aborda el calendario comunal como herramienta para recoger actividades socioculturales y socioproductivas, saberes comunitarios, problemas del contexto y aliados. Se relaciona con la planificacion curricular pertinente y el dialogo de saberes en Educacion Inicial EIB.",
+  "ejemplo_producto": "Ejemplo de referencia: un calendario organizado por epocas o meses, con columnas para actividades de la comunidad, saberes asociados, problemas o potencialidades, aliados y posibilidades pedagogicas. Debe evidenciar actividades como siembra, cosecha, festividades, preparacion de alimentos u otras practicas propias de la comunidad.",
+  "analiza_texto": true,
+  "analiza_tablas": true,
+  "analiza_imagenes": false,
+  "rubrica": [
+    {
+      "dimension": "Estructura y organizacion del calendario comunal",
+      "descripcion_dimension": "Evalua si el producto presenta una estructura clara, completa y organizada segun los componentes esperados del calendario comunal.",
+      "criterio": "Presencia de las cinco columnas estructurales",
+      "descripcion_criterio": "Verifica que el calendario incluya las columnas necesarias para organizar epocas, actividades, saberes, problemas y aliados de la comunidad.",
+      "niveles": {
+        "inicio": "Carece de mas de dos columnas o las columnas no corresponden a las definidas.",
+        "en_proceso": "Tiene columnas basicas, pero algunas estan incompletas, fusionadas o mal nombradas.",
+        "logrado": "Las cinco columnas estan presentes, correctamente nombradas y con contenido.",
+        "destacado": "Las cinco columnas estan completas y agrega valor, como nomenclatura en lengua originaria."
+      }
+    },
+    {
+      "dimension": "Estructura y organizacion del calendario comunal",
+      "descripcion_dimension": "Evalua si el producto presenta una estructura clara, completa y organizada segun los componentes esperados del calendario comunal.",
+      "criterio": "Organizacion temporal por epocas o ciclos comunales",
+      "descripcion_criterio": "Revisa si las actividades estan ordenadas segun los tiempos, epocas o ciclos reconocidos por la comunidad.",
+      "niveles": {
+        "inicio": "No organiza la informacion por epocas, meses o ciclos comunales.",
+        "en_proceso": "Presenta una organizacion temporal parcial o poco clara.",
+        "logrado": "Organiza las actividades segun epocas o ciclos comunales de manera comprensible.",
+        "destacado": "Relaciona ciclos comunales con actividades, saberes, senas y momentos pedagogicos."
+      }
+    },
+    {
+      "dimension": "Actividades socioculturales y socioproductivas",
+      "descripcion_dimension": "Evalua la pertinencia de las actividades seleccionadas y su relacion con la vida cotidiana, cultural y productiva de la comunidad.",
+      "criterio": "Pertinencia y contextualizacion de las actividades",
+      "descripcion_criterio": "Verifica que las actividades respondan al contexto real de la comunidad y no sean ejemplos genericos o descontextualizados.",
+      "niveles": {
+        "inicio": "Las actividades son genericas o no reflejan el contexto de la comunidad.",
+        "en_proceso": "Incluye actividades del contexto, pero con poca descripcion o precision.",
+        "logrado": "Las actividades son pertinentes y reflejan practicas socioculturales y socioproductivas.",
+        "destacado": "Contextualiza actividades con saberes, ritos, senas, secretos, lengua y territorio."
+      }
+    },
+    {
+      "dimension": "Actividades socioculturales y socioproductivas",
+      "descripcion_dimension": "Evalua la pertinencia de las actividades seleccionadas y su relacion con la vida cotidiana, cultural y productiva de la comunidad.",
+      "criterio": "Priorizacion pedagogica para el nivel inicial",
+      "descripcion_criterio": "Revisa si las actividades seleccionadas pueden convertirse en situaciones significativas adecuadas para ninos y ninas de Educacion Inicial.",
+      "niveles": {
+        "inicio": "No se evidencia vinculacion con necesidades pedagogicas de Educacion Inicial.",
+        "en_proceso": "La vinculacion pedagogica es general o insuficiente.",
+        "logrado": "Prioriza actividades viables para experiencias de aprendizaje en Inicial.",
+        "destacado": "Propone situaciones significativas claras y articulables con competencias del CNEB."
+      }
+    }
+  ],
+  "perfil_retroalimentacion": [
+    "Iniciar reconociendo aciertos y explicar por que son valiosos.",
+    "Senalar omisiones o debilidades de manera especifica e indicar como incorporarlas.",
+    "Relacionar observaciones con contenidos del curso y con la planificacion curricular pertinente.",
+    "Proponer preguntas reflexivas que ayuden al docente a profundizar.",
+    "Sugerir ejemplos concretos adaptados al contexto del docente.",
+    "Recordar que el calendario comunal es una herramienta viva que puede actualizarse.",
+    "Nunca emitir juicios de valor sobre la cultura o las practicas de la comunidad.",
+    "Evitar comparaciones que jerarquicen comunidades.",
+    "Fomentar articulacion con caracterizacion linguistica, tratamiento de lenguas y dialogo de saberes."
+  ],
+  "modelo": null,
+  "activo": true
+}

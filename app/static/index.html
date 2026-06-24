@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gestor de CMID Moodle</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body class="manager-page">
+    <header class="topbar manager-topbar">
+      <div>
+        <h1>Gestor de CMID Moodle</h1>
+        <p>Configura previamente cada actividad para que el enlace del usuario procese su PDF automaticamente.</p>
+      </div>
+      <a class="docs-link" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
+    </header>
+
+    <main class="layout">
+      <section class="panel manager-panel">
+        <div class="panel-header">
+          <h2>1. Configurar CMID</h2>
+          <button id="load-demo" type="button">Cargar ejemplo</button>
+        </div>
+
+        <form id="assistant-form">
+          <label>
+            CMID de Moodle
+            <input id="cmid" name="cmid" type="number" min="1" value="194522" required />
+          </label>
+
+          <label>
+            Nombre de la configuracion
+            <input id="nombre-asistente" name="nombre" type="text" required />
+          </label>
+
+          <label>
+            Descripcion del producto
+            <textarea id="descripcion-producto" name="descripcion_producto" rows="7" required></textarea>
+          </label>
+
+          <label>
+            Contexto del curso, unidades y sesiones
+            <textarea id="contexto-curso" name="contexto_curso" rows="7" placeholder="Ejemplo: Unidad 1, sesion 2: se desarrolla el calendario comunal..."></textarea>
+          </label>
+
+          <label>
+            Ejemplo o muestra del producto esperado
+            <textarea id="ejemplo-producto" name="ejemplo_producto" rows="8" placeholder="Pega aqui un ejemplo modelo, estructura esperada o muestra de referencia."></textarea>
+          </label>
+
+          <fieldset class="checkbox-group">
+            <legend>Contenido esperado del producto</legend>
+            <label class="check-row">
+              <input id="analiza-texto" name="analiza_texto" type="checkbox" checked />
+              Texto
+            </label>
+            <label class="check-row">
+              <input id="analiza-tablas" name="analiza_tablas" type="checkbox" checked />
+              Tablas o cuadros
+            </label>
+            <label class="check-row">
+              <input id="analiza-imagenes" name="analiza_imagenes" type="checkbox" />
+              Imagenes, diagramas o capturas
+            </label>
+          </fieldset>
+
+          <label>
+            Rubrica en JSON
+            <textarea id="rubrica" name="rubrica" rows="12" required></textarea>
+          </label>
+
+          <label>
+            Perfil de retroalimentacion
+            <textarea id="perfil" name="perfil_retroalimentacion" rows="8" required></textarea>
+          </label>
+
+          <label>
+            Deployment Azure OpenAI opcional
+            <input id="modelo" name="modelo" type="text" placeholder="Ejemplo: gpt-4o" />
+          </label>
+
+          <button class="primary" type="submit">Guardar cambios</button>
+        </form>
+      </section>
+
+      <section class="panel test-panel">
+        <h2>2. Probar desde Moodle</h2>
+        <form id="moodle-form">
+          <div class="grid-two">
+            <label>
+              CMID
+              <input id="test-cmid" name="cmid" type="number" min="1" value="194522" required />
+            </label>
+            <label>
+              User ID
+              <input name="user_id" type="number" min="1" value="481404" required />
+            </label>
+          </div>
+
+          <div class="grid-two">
+            <label>
+              Course ID
+              <input name="course_id" type="number" min="1" value="2440" required />
+            </label>
+            <label>
+              Nombre docente
+              <input name="nombre" type="text" value="MARIA LUISA" required />
+            </label>
+          </div>
+
+          <label class="check-row">
+            <input name="force_refresh" type="checkbox" />
+            Regenerar aunque ya exista retroalimentacion
+          </label>
+
+          <button class="primary" type="submit">Traer PDF de Moodle y evaluar</button>
+        </form>
+
+        <div class="result-box">
+          <div class="result-header">
+            <h3>Resultado</h3>
+            <span id="status">Listo</span>
+          </div>
+          <pre id="result"></pre>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <div class="panel-header">
+          <h2>CMID configurados</h2>
+          <button id="refresh-list" type="button">Actualizar</button>
+        </div>
+        <div id="assistant-list" class="assistant-list"></div>
+      </section>
+
+      <section class="panel wide">
+        <div class="panel-header">
+          <h2>Ultimas ejecuciones</h2>
+          <button id="refresh-analytics" type="button">Actualizar</button>
+        </div>
+        <div id="analytics-list" class="assistant-list"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
