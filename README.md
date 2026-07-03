@@ -73,6 +73,8 @@ Desde esa vista configura previamente cada actividad de Moodle por `cmid`:
 - contexto del curso, unidades y sesiones donde se desarrolla la base conceptual del producto
 - ejemplo o muestra del producto esperado
 - checks de contenido esperado: texto, tablas/cuadros, imagenes
+- dependencia opcional de otro `cmid`
+- validacion previa del documento y similitud con entrega relacionada
 - rubrica
 - perfil de retroalimentacion
 - deployment de Azure OpenAI opcional
@@ -100,11 +102,59 @@ Con esos parametros, el sistema:
 9. Elimina el PDF temporal.
 10. Guarda y muestra la retroalimentacion.
 
+### Rol del enlace
+
+El enlace acepta `role`:
+
+```text
+role=0
+```
+
+Usuario normal. Si ya tiene retroalimentacion exitosa para `cmid`, `user_id` y `course_id`, se muestra la guardada.
+
+```text
+role=1
+```
+
+Validador. Siempre regenera la retroalimentacion, aunque ya exista una anterior.
+
+Si no se envia `role`, se asume `role=0`.
+
 Para forzar una regeneracion manual:
 
 ```text
 &force_refresh=true
 ```
+
+### Dependencia de otro CMID
+
+Cada asistente puede marcar:
+
+```json
+{
+  "usa_cmid_relacionado": true,
+  "cmid_relacionado": 100,
+  "validar_similitud": true
+}
+```
+
+Cuando esta activo, el sistema descarga tambien la entrega del `cmid_relacionado` para el mismo `user_id` y `course_id`. Luego:
+
+- compara la entrega anterior con la actual
+- calcula similitud
+- valida que la nueva entrega no sea una repeticion
+- orienta la retroalimentacion como continuidad o mejora respecto a la entrega anterior
+
+### Validacion previa
+
+Antes de retroalimentar, el sistema puede validar:
+
+- que el PDF no este en blanco o casi vacio
+- que tenga relacion con el producto esperado
+- que no sea un documento ajeno a la actividad
+- que no repita la entrega de un `cmid` relacionado
+
+Si no pasa la validacion, no se genera retroalimentacion y se muestra el motivo.
 
 Si necesitas respuesta JSON para integraciones tecnicas, agrega:
 

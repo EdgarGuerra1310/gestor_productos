@@ -280,7 +280,8 @@ label {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -295,7 +296,8 @@ textarea {
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   border-color: var(--accent);
   outline: 2px solid rgba(15, 118, 110, 0.16);
 }
@@ -360,10 +362,29 @@ pre {
 .feedback-output {
   margin-top: 16px;
   max-height: none;
+  padding: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fafc;
+  background: linear-gradient(180deg, #ffffff 0, #f8fafc 100%);
   color: #111827;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.feedback-output p + p,
+.feedback-output p + ul,
+.feedback-output ul + p {
+  margin-top: 12px;
+}
+
+.feedback-output ul {
+  margin: 10px 0 0;
+  padding-left: 22px;
+}
+
+.feedback-output li + li {
+  margin-top: 6px;
 }
 
 .table-wrap {

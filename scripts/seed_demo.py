@@ -38,6 +38,10 @@ def main() -> None:
         analiza_texto=True,
         analiza_tablas=True,
         analiza_imagenes=False,
+        usa_cmid_relacionado=False,
+        cmid_relacionado=None,
+        validar_documento=True,
+        validar_similitud=True,
         rubrica=[
             {
                 "dimension": "Estructura y organizacion del calendario comunal",

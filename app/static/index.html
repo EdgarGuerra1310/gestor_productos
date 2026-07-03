@@ -64,6 +64,26 @@
             </label>
           </fieldset>
 
+          <fieldset class="checkbox-group">
+            <legend>Dependencia y validacion</legend>
+            <label class="check-row">
+              <input id="usa-cmid-relacionado" name="usa_cmid_relacionado" type="checkbox" />
+              Este producto depende de un CMID anterior
+            </label>
+            <label>
+              CMID relacionado
+              <input id="cmid-relacionado" name="cmid_relacionado" type="number" min="1" placeholder="Ejemplo: 100" />
+            </label>
+            <label class="check-row">
+              <input id="validar-documento" name="validar_documento" type="checkbox" checked />
+              Validar documento antes de retroalimentar
+            </label>
+            <label class="check-row">
+              <input id="validar-similitud" name="validar_similitud" type="checkbox" checked />
+              Validar que no repita la entrega relacionada
+            </label>
+          </fieldset>
+
           <label>
             Rubrica en JSON
             <textarea id="rubrica" name="rubrica" rows="12" required></textarea>
@@ -107,6 +127,14 @@
               <input name="nombre" type="text" value="MARIA LUISA" required />
             </label>
           </div>
+
+          <label>
+            Rol
+            <select name="role">
+              <option value="0" selected>Usuario</option>
+              <option value="1">Validador</option>
+            </select>
+          </label>
 
           <label class="check-row">
             <input name="force_refresh" type="checkbox" />

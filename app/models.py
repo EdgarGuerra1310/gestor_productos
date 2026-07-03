@@ -14,6 +14,10 @@ class AssistantConfig(SQLModel, table=True):
     analiza_texto: bool = True
     analiza_tablas: bool = True
     analiza_imagenes: bool = False
+    usa_cmid_relacionado: bool = False
+    cmid_relacionado: int | None = Field(default=None, index=True)
+    validar_documento: bool = True
+    validar_similitud: bool = True
     rubrica: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     perfil_retroalimentacion: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     modelo: str | None = None
@@ -28,6 +32,7 @@ class ProcessingRun(SQLModel, table=True):
     user_id: int = Field(index=True)
     course_id: int = Field(index=True)
     nombre: str
+    role: int = Field(default=0, index=True)
     source: str = Field(default="moodle", index=True)
     status: str = Field(default="started", index=True)
     stage: str = Field(default="started", index=True)
@@ -40,6 +45,13 @@ class ProcessingRun(SQLModel, table=True):
     tablas_detectadas: int | None = None
     imagenes_analizadas: int | None = None
     caracteres_extraidos: int | None = None
+    cmid_relacionado: int | None = Field(default=None, index=True)
+    related_pdf_filename: str | None = None
+    related_caracteres_extraidos: int | None = None
+    similarity_score: float | None = None
+    validation_passed: bool | None = None
+    validation_reason: str | None = None
+    relevance_score: float | None = None
 
     modelo: str | None = None
     prompt_tokens: int | None = None

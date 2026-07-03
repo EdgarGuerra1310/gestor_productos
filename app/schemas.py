@@ -31,6 +31,10 @@ class AssistantConfigIn(BaseModel):
     analiza_texto: bool = True
     analiza_tablas: bool = True
     analiza_imagenes: bool = False
+    usa_cmid_relacionado: bool = False
+    cmid_relacionado: int | None = None
+    validar_documento: bool = True
+    validar_similitud: bool = True
     rubrica: list[RubricCriterion]
     perfil_retroalimentacion: list[str]
     modelo: str | None = None
@@ -61,10 +65,16 @@ class ProcessingResult(BaseModel):
     user_id: int
     course_id: int
     nombre: str
+    role: int = 0
     paginas_detectadas: int
     tablas_detectadas: int
     imagenes_analizadas: int = 0
     caracteres_extraidos: int
+    cmid_relacionado: int | None = None
+    similarity_score: float | None = None
+    validation_passed: bool | None = None
+    validation_reason: str | None = None
+    relevance_score: float | None = None
     total_ms: int | None = None
     moodle_ms: int | None = None
     extraction_ms: int | None = None

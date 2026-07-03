@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     tesseract_cmd: str = ""
     vision_max_pages: int = 3
     vision_dpi: int = 144
+    min_extracted_chars: int = 80
+    similarity_threshold: float = 0.88
+    validation_max_chars: int = 25000
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

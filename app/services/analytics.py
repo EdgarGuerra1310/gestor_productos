@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from uuid import uuid4
 
@@ -22,6 +22,7 @@ def create_run(
     user_id: int,
     course_id: int,
     nombre: str,
+    role: int = 0,
     source: str,
     request_params: dict,
 ) -> ProcessingRun:
@@ -31,6 +32,7 @@ def create_run(
         user_id=user_id,
         course_id=course_id,
         nombre=nombre,
+        role=role,
         source=source,
         request_params=request_params,
     )
@@ -115,8 +117,12 @@ def save_rubric_evaluations(
     session.commit()
 
 
-def get_recent_runs(session: Session, limit: int = 50) -> list[ProcessingRun]:
-    statement = select(ProcessingRun).order_by(desc(ProcessingRun.started_at)).limit(limit)
+def get_recent_runs(session: Session, limit: int = 50, minutes: int | None = None) -> list[ProcessingRun]:
+    statement = select(ProcessingRun)
+    if minutes is not None:
+        since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        statement = statement.where(ProcessingRun.started_at >= since)
+    statement = statement.order_by(desc(ProcessingRun.started_at)).limit(limit)
     return list(session.exec(statement).all())
 
 

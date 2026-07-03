@@ -6,6 +6,10 @@
   "analiza_texto": true,
   "analiza_tablas": true,
   "analiza_imagenes": false,
+  "usa_cmid_relacionado": false,
+  "cmid_relacionado": null,
+  "validar_documento": true,
+  "validar_similitud": true,
   "rubrica": [
     {
       "dimension": "Estructura y organizacion del calendario comunal",

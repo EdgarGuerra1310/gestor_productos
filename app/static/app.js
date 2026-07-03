@@ -9,6 +9,10 @@ const demoAssistant = {
   analiza_texto: true,
   analiza_tablas: true,
   analiza_imagenes: false,
+  usa_cmid_relacionado: false,
+  cmid_relacionado: null,
+  validar_documento: true,
+  validar_similitud: true,
   rubrica: [
     {
       dimension: "Estructura y organizacion del calendario comunal",
@@ -92,6 +96,10 @@ const fields = {
   analizaTexto: document.querySelector("#analiza-texto"),
   analizaTablas: document.querySelector("#analiza-tablas"),
   analizaImagenes: document.querySelector("#analiza-imagenes"),
+  usaCmidRelacionado: document.querySelector("#usa-cmid-relacionado"),
+  cmidRelacionado: document.querySelector("#cmid-relacionado"),
+  validarDocumento: document.querySelector("#validar-documento"),
+  validarSimilitud: document.querySelector("#validar-similitud"),
   rubrica: document.querySelector("#rubrica"),
   perfil: document.querySelector("#perfil"),
   modelo: document.querySelector("#modelo"),
@@ -145,6 +153,7 @@ document.querySelector("#moodle-form").addEventListener("submit", async (event) 
       user_id: formData.get("user_id"),
       course_id: formData.get("course_id"),
       nombre: formData.get("nombre"),
+      role: formData.get("role") || "0",
       formato: "json",
       force_refresh: formData.get("force_refresh") === "on" ? "true" : "false",
     });
@@ -178,6 +187,10 @@ function fillAssistantForm(cmid, assistant, mode = "edit") {
   fields.analizaTexto.checked = assistant.analiza_texto !== false;
   fields.analizaTablas.checked = assistant.analiza_tablas !== false;
   fields.analizaImagenes.checked = assistant.analiza_imagenes === true;
+  fields.usaCmidRelacionado.checked = assistant.usa_cmid_relacionado === true;
+  fields.cmidRelacionado.value = assistant.cmid_relacionado || "";
+  fields.validarDocumento.checked = assistant.validar_documento !== false;
+  fields.validarSimilitud.checked = assistant.validar_similitud !== false;
   fields.rubrica.value = JSON.stringify(assistant.rubrica, null, 2);
   fields.perfil.value = assistant.perfil_retroalimentacion.join("\n");
   fields.modelo.value = assistant.modelo || "";
@@ -194,6 +207,10 @@ function readAssistantPayload() {
     analiza_texto: fields.analizaTexto.checked,
     analiza_tablas: fields.analizaTablas.checked,
     analiza_imagenes: fields.analizaImagenes.checked,
+    usa_cmid_relacionado: fields.usaCmidRelacionado.checked,
+    cmid_relacionado: fields.cmidRelacionado.value ? Number(fields.cmidRelacionado.value) : null,
+    validar_documento: fields.validarDocumento.checked,
+    validar_similitud: fields.validarSimilitud.checked,
     rubrica: JSON.parse(fields.rubrica.value),
     perfil_retroalimentacion: fields.perfil.value
       .split("\n")
@@ -236,7 +253,7 @@ async function checkExistingCmid() {
 
 async function loadAnalytics() {
   try {
-    const response = await fetch("/analitica?limit=20");
+    const response = await fetch("/analitica?limit=100&minutes=5");
     const runs = await parseResponse(response);
     renderAnalytics(runs);
   } catch (error) {
@@ -257,6 +274,7 @@ function renderAssistants(assistants) {
           <strong>CMID ${assistant.cmid}: ${escapeHtml(assistant.nombre)}</strong>
           <p>${assistant.rubrica.length} criterios de rubrica</p>
           <p>Modo: ${analysisModeLabel(assistant)}</p>
+          ${assistant.usa_cmid_relacionado ? `<p>Relacionado: CMID ${assistant.cmid_relacionado || "-"}</p>` : ""}
           <p>${assistant.perfil_retroalimentacion.length} orientaciones</p>
           <button type="button" data-cmid="${assistant.cmid}">Editar</button>
         </article>
@@ -314,12 +332,17 @@ function formatProcessingResult(data) {
   return [
     `RUN ID: ${data.run_id}`,
     `Origen: ${data.desde_cache ? "retroalimentacion guardada" : "generado ahora"}`,
+    `Rol: ${data.role === 1 ? "validador" : "usuario"}`,
+    `Validacion: ${data.validation_passed === false ? "rechazada" : "aprobada"}`,
+    data.validation_reason ? `Motivo validacion: ${data.validation_reason}` : "",
+    data.cmid_relacionado ? `CMID relacionado: ${data.cmid_relacionado}` : "",
+    data.similarity_score != null ? `Similitud: ${data.similarity_score}` : "",
     `Modelo: ${data.modelo || "-"}`,
     `Tiempo total: ${data.total_ms || "-"} ms`,
     `Imagenes analizadas: ${data.imagenes_analizadas || 0}`,
     `Tokens: ${data.total_tokens || "-"}`,
     "",
-    data.retroalimentacion,
+    cleanDisplayText(data.retroalimentacion),
     rubric ? "\nEVALUACION POR RUBRICA\n" + rubric : "",
   ].join("\n");
 }
@@ -360,6 +383,20 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function cleanDisplayText(value) {
+  return String(value ?? "")
+    .replaceAll("\\r\\n", "\n")
+    .replaceAll("\\n", "\n")
+    .replaceAll("\\t", " ")
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\s*\/\s*(p|div|li|h[1-6])\s*>/gi, "\n")
+    .replace(/<\s*li\s*>/gi, "- ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 fillAssistantForm(194522, demoAssistant, "create");

@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from html import escape
+import re
+from html import escape, unescape
 from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -26,12 +27,17 @@ from app.services.analytics import (
 )
 from app.services.assistant_manager import create_assistant, get_assistant_or_404, list_assistants, upsert_assistant
 from app.services.moodle import MoodleClient, MoodleDownloadError
-from app.services.openai_feedback import generate_feedback
+from app.services.openai_feedback import generate_feedback, validate_submission
 from app.services.pdf_extractor import extract_pdf_markdown
+from app.services.similarity import text_similarity
 
 app = FastAPI(title=settings.app_name)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+class ValidationRejected(RuntimeError):
+    pass
 
 
 @app.on_event("startup")
@@ -84,8 +90,12 @@ def put_asistente(
 
 
 @app.get("/analitica")
-def get_analitica(limit: int = Query(50, ge=1, le=500), session: Session = Depends(get_session)):
-    return get_recent_runs(session, limit=limit)
+def get_analitica(
+    limit: int = Query(50, ge=1, le=500),
+    minutes: int = Query(5, ge=1, le=1440),
+    session: Session = Depends(get_session),
+):
+    return get_recent_runs(session, limit=limit, minutes=minutes)
 
 
 @app.get("/analitica/{run_id}")
@@ -102,14 +112,16 @@ async def procesar_producto(
     user_id: int = Query(...),
     course_id: int = Query(...),
     nombre: str = Query(...),
+    role: int = Query(0, ge=0, le=1),
     formato: str = Query("html", pattern="^(html|json)$"),
     force_refresh: bool = Query(False),
     session: Session = Depends(get_session),
 ):
+    force_refresh = force_refresh or role == 1
     if formato == "html":
-        return HTMLResponse(_loading_to_html(cmid, user_id, course_id, nombre, force_refresh))
+        return HTMLResponse(_loading_to_html(cmid, user_id, course_id, nombre, force_refresh, role))
 
-    if not force_refresh:
+    if not force_refresh and role == 0:
         cached_run = get_latest_successful_run(
             session,
             cmid=cmid,
@@ -132,11 +144,14 @@ async def procesar_producto(
             "user_id": user_id,
             "course_id": course_id,
             "nombre": nombre,
+            "role": role,
             "formato": formato,
             "force_refresh": force_refresh,
         },
+        role=role,
     )
     pdf_path: Path | None = None
+    related_pdf_path: Path | None = None
 
     try:
         update_run(session, run, stage="assistant_lookup")
@@ -167,9 +182,43 @@ async def procesar_producto(
             moodle_ms=moodle_ms,
             pdf_filename=pdf_path.name,
             pdf_size_bytes=pdf_path.stat().st_size,
+            cmid_relacionado=assistant.cmid_relacionado if assistant.usa_cmid_relacionado else None,
         )
 
-        result = _process_pdf_path(session, run, pdf_path, assistant, cmid, user_id, course_id, nombre)
+        if assistant.usa_cmid_relacionado and not assistant.cmid_relacionado:
+            raise RuntimeError("El CMID esta configurado como dependiente, pero no tiene cmid_relacionado.")
+
+        if assistant.usa_cmid_relacionado and assistant.cmid_relacionado:
+            related_timer = start_timer()
+            update_run(session, run, stage="related_moodle_download")
+            related_pdf_path = await moodle_client.download_submission_pdf(
+                cmid=assistant.cmid_relacionado,
+                user_id=user_id,
+                course_id=course_id,
+                target_dir=settings.temp_dir,
+            )
+            log_event(
+                session,
+                run.id,
+                "related_moodle_download",
+                "PDF relacionado descargado desde Moodle",
+                elapsed_ms=now_ms(related_timer),
+                details={"cmid_relacionado": assistant.cmid_relacionado, "pdf_filename": related_pdf_path.name},
+            )
+            update_run(session, run, related_pdf_filename=related_pdf_path.name)
+
+        result = _process_pdf_path(
+            session,
+            run,
+            pdf_path,
+            assistant,
+            cmid,
+            user_id,
+            course_id,
+            nombre,
+            related_pdf_path=related_pdf_path,
+            total_timer=total_timer,
+        )
 
         cleanup_ms = _cleanup_pdf(pdf_path)
         total_ms = now_ms(total_timer)
@@ -189,6 +238,10 @@ async def procesar_producto(
         if formato == "json":
             raise HTTPException(status_code=502, detail={"run_id": run.id, "error": str(exc)}) from exc
         return HTMLResponse(_error_to_html(str(exc), cmid, user_id, course_id, nombre, run.id), status_code=502)
+    except ValidationRejected as exc:
+        if formato == "json":
+            raise HTTPException(status_code=422, detail={"run_id": run.id, "error": str(exc)}) from exc
+        return HTMLResponse(_error_to_html(str(exc), cmid, user_id, course_id, nombre, run.id), status_code=422)
     except RuntimeError as exc:
         _record_failure(session, run, total_timer, exc.__class__.__name__, str(exc))
         if formato == "json":
@@ -201,6 +254,7 @@ async def procesar_producto(
         return HTMLResponse(_error_to_html(str(exc), cmid, user_id, course_id, nombre, run.id), status_code=500)
     finally:
         _cleanup_pdf(pdf_path)
+        _cleanup_pdf(related_pdf_path)
 
 
 @app.post("/procesar_producto_pdf", response_model=ProcessingResult)
@@ -230,18 +284,20 @@ async def procesar_producto_pdf(
         _validate_pdf_upload(file.filename or "", content)
         pdf_path.write_bytes(content)
         update_run(session, run, pdf_filename=file.filename, pdf_size_bytes=len(content))
-        result = _process_pdf_path(session, run, pdf_path, assistant, cmid, user_id, course_id, nombre)
+        result = _process_pdf_path(session, run, pdf_path, assistant, cmid, user_id, course_id, nombre, total_timer=total_timer)
         cleanup_ms = _cleanup_pdf(pdf_path)
         total_ms = now_ms(total_timer)
         finish_run(session, run, status="success", total_ms=total_ms, cleanup_ms=cleanup_ms)
         result.total_ms = total_ms
         return result
-    except RuntimeError as exc:
-        _record_failure(session, run, total_timer, exc.__class__.__name__, str(exc))
-        raise HTTPException(status_code=500, detail={"run_id": run.id, "error": str(exc)}) from exc
     except HTTPException as exc:
         _record_failure(session, run, total_timer, exc.__class__.__name__, str(exc.detail))
         raise HTTPException(status_code=exc.status_code, detail={"run_id": run.id, "error": exc.detail}) from exc
+    except ValidationRejected as exc:
+        raise HTTPException(status_code=422, detail={"run_id": run.id, "error": str(exc)}) from exc
+    except RuntimeError as exc:
+        _record_failure(session, run, total_timer, exc.__class__.__name__, str(exc))
+        raise HTTPException(status_code=500, detail={"run_id": run.id, "error": str(exc)}) from exc
     finally:
         _cleanup_pdf(pdf_path)
 
@@ -255,6 +311,8 @@ def _process_pdf_path(
     user_id: int,
     course_id: int,
     nombre: str,
+    related_pdf_path: Path | None = None,
+    total_timer: float | None = None,
 ) -> ProcessingResult:
     update_run(session, run, stage="pdf_extraction")
     extraction_timer = start_timer()
@@ -271,6 +329,35 @@ def _process_pdf_path(
     if not extracted.markdown.strip() and not extracted.image_data_urls:
         raise RuntimeError(
             "No se pudo extraer contenido del PDF. Si es escaneado, activa imagenes o OCR."
+        )
+
+    related_markdown = None
+    similarity_score = None
+    if related_pdf_path is not None:
+        related_extracted = extract_pdf_markdown(
+            related_pdf_path,
+            include_text=include_text,
+            include_tables=include_tables,
+            include_images=False,
+        )
+        related_markdown = related_extracted.markdown
+        similarity_score = text_similarity(extracted.markdown, related_markdown)
+        update_run(
+            session,
+            run,
+            related_caracteres_extraidos=len(related_markdown),
+            similarity_score=similarity_score,
+        )
+        log_event(
+            session,
+            run.id,
+            "related_pdf_extraction",
+            "Entrega relacionada extraida y comparada",
+            details={
+                "cmid_relacionado": assistant.cmid_relacionado,
+                "related_caracteres_extraidos": len(related_markdown),
+                "similarity_score": similarity_score,
+            },
         )
 
     log_event(
@@ -309,6 +396,16 @@ def _process_pdf_path(
         },
     )
 
+    _validate_before_feedback(
+        session=session,
+        run=run,
+        assistant=assistant,
+        extracted_markdown=extracted.markdown,
+        related_markdown=related_markdown,
+        similarity_score=similarity_score,
+        total_timer=total_timer,
+    )
+
     update_run(session, run, stage="openai_feedback", modelo=assistant.modelo or settings.azure_openai_deployment)
     gpt_timer = start_timer()
     feedback = generate_feedback(
@@ -318,6 +415,8 @@ def _process_pdf_path(
         user_id=user_id,
         course_id=course_id,
         image_data_urls=extracted.image_data_urls,
+        related_markdown=related_markdown,
+        similarity_score=similarity_score,
     )
     gpt_ms = now_ms(gpt_timer)
 
@@ -352,10 +451,16 @@ def _process_pdf_path(
         user_id=user_id,
         course_id=course_id,
         nombre=nombre,
+        role=run.role,
         paginas_detectadas=extracted.pages,
         tablas_detectadas=extracted.tables,
         imagenes_analizadas=len(extracted.image_data_urls),
         caracteres_extraidos=len(extracted.markdown),
+        cmid_relacionado=assistant.cmid_relacionado if assistant.usa_cmid_relacionado else None,
+        similarity_score=similarity_score,
+        validation_passed=True,
+        validation_reason=run.validation_reason,
+        relevance_score=run.relevance_score,
         moodle_ms=run.moodle_ms,
         extraction_ms=extraction_ms,
         gpt_ms=gpt_ms,
@@ -374,6 +479,132 @@ def _validate_pdf_upload(filename: str, content: bytes) -> None:
     max_bytes = settings.max_pdf_mb * 1024 * 1024
     if len(content) > max_bytes:
         raise HTTPException(status_code=400, detail=f"El PDF supera {settings.max_pdf_mb} MB.")
+
+
+def _validate_before_feedback(
+    *,
+    session: Session,
+    run,
+    assistant,
+    extracted_markdown: str,
+    related_markdown: str | None,
+    similarity_score: float | None,
+    total_timer: float | None = None,
+) -> None:
+    update_run(session, run, stage="validation")
+
+    if len(extracted_markdown.strip()) < settings.min_extracted_chars:
+        _reject_validation(
+            session,
+            run,
+            "El documento no contiene suficiente informacion legible para validar el producto. No se dara retroalimentacion.",
+            total_timer,
+            relevance_score=0,
+            similarity_score=similarity_score,
+        )
+
+    if (
+        assistant.usa_cmid_relacionado
+        and assistant.validar_similitud
+        and similarity_score is not None
+        and similarity_score >= settings.similarity_threshold
+    ):
+        _reject_validation(
+            session,
+            run,
+            (
+                "La entrega actual es demasiado similar a la entrega relacionada. "
+                "No se dara retroalimentacion porque parece una repeticion de una subida anterior."
+            ),
+            total_timer,
+            relevance_score=None,
+            similarity_score=similarity_score,
+        )
+
+    if assistant.validar_documento is False:
+        update_run(
+            session,
+            run,
+            validation_passed=True,
+            validation_reason="Validacion documental desactivada en la configuracion del CMID.",
+            similarity_score=similarity_score,
+        )
+        return
+
+    validation = validate_submission(
+        assistant,
+        extracted_markdown,
+        related_markdown=related_markdown,
+        similarity_score=similarity_score,
+    )
+    update_run(
+        session,
+        run,
+        validation_passed=validation.is_valid,
+        validation_reason=validation.reason,
+        relevance_score=validation.relevance_score,
+        similarity_score=validation.similarity_score or similarity_score,
+        extra={
+            **(run.extra or {}),
+            "validation": {
+                "model": validation.model,
+                "total_tokens": validation.total_tokens,
+            },
+        },
+    )
+    log_event(
+        session,
+        run.id,
+        "validation",
+        "Validacion previa completada",
+        details={
+            "is_valid": validation.is_valid,
+            "reason": validation.reason,
+            "relevance_score": validation.relevance_score,
+            "similarity_score": validation.similarity_score or similarity_score,
+        },
+    )
+    if not validation.is_valid:
+        _reject_validation(
+            session,
+            run,
+            f"No se dara retroalimentacion: {validation.reason}",
+            total_timer,
+            relevance_score=validation.relevance_score,
+            similarity_score=validation.similarity_score or similarity_score,
+        )
+
+
+def _reject_validation(
+    session: Session,
+    run,
+    reason: str,
+    total_timer: float | None,
+    *,
+    relevance_score: float | None,
+    similarity_score: float | None,
+) -> None:
+    total_ms = now_ms(total_timer) if total_timer is not None else 0
+    log_event(
+        session,
+        run.id,
+        "validation",
+        reason,
+        level="warning",
+        elapsed_ms=total_ms,
+        details={"relevance_score": relevance_score, "similarity_score": similarity_score},
+    )
+    finish_run(
+        session,
+        run,
+        status="validation_failed",
+        total_ms=total_ms,
+        validation_passed=False,
+        validation_reason=reason,
+        relevance_score=relevance_score,
+        similarity_score=similarity_score,
+    )
+    raise ValidationRejected(reason)
 
 
 def _record_failure(session: Session, run, total_timer: float, error_type: str, error_message: str) -> None:
@@ -427,10 +658,16 @@ def _processing_result_from_cache(session: Session, run, nombre: str) -> Process
         user_id=run.user_id,
         course_id=run.course_id,
         nombre=run.nombre or nombre,
+        role=run.role,
         paginas_detectadas=run.paginas_detectadas or 0,
         tablas_detectadas=run.tablas_detectadas or 0,
         imagenes_analizadas=run.imagenes_analizadas or 0,
         caracteres_extraidos=run.caracteres_extraidos or 0,
+        cmid_relacionado=run.cmid_relacionado,
+        similarity_score=run.similarity_score,
+        validation_passed=run.validation_passed,
+        validation_reason=run.validation_reason,
+        relevance_score=run.relevance_score,
         total_ms=run.total_ms,
         moodle_ms=run.moodle_ms,
         extraction_ms=run.extraction_ms,
@@ -448,6 +685,7 @@ def _loading_to_html(
     course_id: int,
     nombre: str,
     force_refresh: bool = False,
+    role: int = 0,
 ) -> str:
     api_url = "/procesar_producto?" + urlencode(
         {
@@ -455,6 +693,7 @@ def _loading_to_html(
             "user_id": user_id,
             "course_id": course_id,
             "nombre": nombre,
+            "role": role,
             "formato": "json",
             "force_refresh": str(force_refresh).lower(),
         }
@@ -471,14 +710,14 @@ def _loading_to_html(
     <header class="topbar user-topbar">
       <div>
         <h1>Procesando producto</h1>
-        <p>CMID {cmid} · Usuario {user_id} · Curso {course_id}</p>
+        <p>CMID {cmid} &middot; Usuario {user_id} &middot; Curso {course_id} &middot; Rol {role}</p>
       </div>
     </header>
     <main class="single-page">
       <section id="loading-panel" class="panel loading-panel user-result-panel">
         <div class="spinner" aria-hidden="true"></div>
         <h2>Estamos generando tu retroalimentacion</h2>
-        <p class="meta-line">Descargando el PDF de Moodle, leyendo el contenido y aplicando la rubrica configurada.</p>
+        <p class="meta-line">Espera unos minutos, ya casi terminamos</p>
       </section>
       <section id="result-panel" class="panel user-result-panel hidden"></section>
     </main>
@@ -496,6 +735,35 @@ def _loading_to_html(
           .replaceAll("'", "&#039;");
       }}
 
+      function cleanDisplayText(value) {{
+        return String(value ?? "")
+          .replaceAll("\\\\r\\\\n", "\\n")
+          .replaceAll("\\\\n", "\\n")
+          .replaceAll("\\\\t", " ")
+          .replace(/<\\s*br\\s*\\/?\\s*>/gi, "\\n")
+          .replace(/<\\s*\\/\\s*(p|div|li|h[1-6])\\s*>/gi, "\\n")
+          .replace(/<\\s*li\\s*>/gi, "- ")
+          .replace(/<[^>]+>/g, "")
+          .replace(/[ \\t]+/g, " ")
+          .replace(/\\n{{3,}}/g, "\\n\\n")
+          .trim();
+      }}
+
+      function feedbackToHtml(value) {{
+        const text = cleanDisplayText(value);
+        if (!text) return '<p>No se recibio retroalimentacion textual.</p>';
+        return text
+          .split(/\\n{{2,}}/)
+          .map((block) => {{
+            const lines = block.split("\\n").map((line) => line.trim()).filter(Boolean);
+            if (lines.length && lines.every((line) => /^[-*]\\s+/.test(line))) {{
+              return `<ul>${{lines.map((line) => `<li>${{escapeHtml(line.replace(/^[-*]\\s+/, ""))}}</li>`).join("")}}</ul>`;
+            }}
+            return `<p>${{escapeHtml(lines.join(" "))}}</p>`;
+          }})
+          .join("");
+      }}
+
       function renderResult(data) {{
         const cacheLine = data.desde_cache ? '<p class="cache-note">Retroalimentacion recuperada de una ejecucion anterior</p>' : "";
         const rows = (data.evaluacion_rubrica || []).map((item) => `
@@ -510,10 +778,11 @@ def _loading_to_html(
 
         resultPanel.innerHTML = `
           <h2>{escape(nombre)}</h2>
-          <p class="meta-line">ID de ejecucion: ${{escapeHtml(data.run_id)}}</p>
+          <!-- <p class="meta-line">ID de ejecucion: ${{escapeHtml(data.run_id)}}</p> -->
           ${{cacheLine}}
-          <p class="meta-line">Paginas: ${{escapeHtml(data.paginas_detectadas)}} · Tablas: ${{escapeHtml(data.tablas_detectadas)}} · Imagenes: ${{escapeHtml(data.imagenes_analizadas || 0)}} · Tiempo: ${{escapeHtml(data.total_ms || "-")}} ms</p>
-          <pre class="feedback-output">${{escapeHtml(data.retroalimentacion)}}</pre>
+          <p class="meta-line">Rol: ${{data.role === 1 ? "Validador" : "Usuario"}} &middot; Validacion: ${{data.validation_passed === false ? "rechazada" : "aprobada"}} ${{data.similarity_score != null ? "&middot; Similitud: " + escapeHtml(data.similarity_score) : ""}}</p>
+          <p class="meta-line">Paginas: ${{escapeHtml(data.paginas_detectadas)}} &middot; Tablas: ${{escapeHtml(data.tablas_detectadas)}} &middot; Imagenes: ${{escapeHtml(data.imagenes_analizadas || 0)}} &middot; Tiempo: ${{escapeHtml(data.total_ms || "-")}} ms</p>
+          <div class="feedback-output">${{feedbackToHtml(data.retroalimentacion)}}</div>
           ${{rows ? `
             <h3>Evaluacion por criterio</h3>
             <div class="table-wrap">
@@ -567,7 +836,7 @@ def _loading_to_html(
 
 
 def _result_to_html(result: ProcessingResult) -> str:
-    feedback = escape(result.retroalimentacion)
+    feedback = _feedback_to_html(result.retroalimentacion)
     cache_line = (
         '<p class="cache-note">Retroalimentacion recuperada de una ejecucion anterior</p>'
         if result.desde_cache
@@ -614,7 +883,7 @@ def _result_to_html(result: ProcessingResult) -> str:
     <header class="topbar user-topbar">
       <div>
         <h1>Retroalimentacion del producto</h1>
-        <p>CMID {result.cmid} · Usuario {result.user_id} · Curso {result.course_id}</p>
+        <p>CMID {result.cmid} &middot; Usuario {result.user_id} &middot; Curso {result.course_id}</p>
       </div>
       <a class="docs-link" href="/gestor">Gestor</a>
     </header>
@@ -623,10 +892,11 @@ def _result_to_html(result: ProcessingResult) -> str:
         <h2>{escape(result.nombre)}</h2>
         <p class="meta-line">ID de ejecucion: {result.run_id}</p>
         {cache_line}
+        <p class="meta-line">Rol: {"Validador" if result.role == 1 else "Usuario"} &middot; Validacion: {"rechazada" if result.validation_passed is False else "aprobada"}{f" &middot; Similitud: {result.similarity_score}" if result.similarity_score is not None else ""}</p>
         <p class="meta-line">Tiempo total: {result.total_ms or 0} ms</p>
         <p class="meta-line">Imagenes analizadas: {result.imagenes_analizadas}</p>
-        <p class="meta-line">Paginas detectadas: {result.paginas_detectadas} · Tablas detectadas: {result.tablas_detectadas}</p>
-        <pre class="feedback-output">{feedback}</pre>
+        <p class="meta-line">Paginas detectadas: {result.paginas_detectadas} &middot; Tablas detectadas: {result.tablas_detectadas}</p>
+        <div class="feedback-output">{feedback}</div>
         {rubric_table}
       </section>
     </main>
@@ -655,7 +925,7 @@ def _error_to_html(
     <header class="topbar user-topbar">
       <div>
         <h1>No se pudo procesar el producto</h1>
-        <p>CMID {cmid} · Usuario {user_id} · Curso {course_id}</p>
+        <p>CMID {cmid} &middot; Usuario {user_id} &middot; Curso {course_id}</p>
       </div>
       <a class="docs-link" href="/gestor">Gestor</a>
     </header>
@@ -668,3 +938,37 @@ def _error_to_html(
     </main>
   </body>
 </html>"""
+
+
+def _feedback_to_html(value: str) -> str:
+    text = _clean_display_text(value)
+    if not text:
+        return "<p>No se recibio retroalimentacion textual.</p>"
+
+    chunks: list[str] = []
+    for block in re.split(r"\n{2,}", text):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines:
+            continue
+        if all(re.match(r"^[-*]\s+", line) for line in lines):
+            items = []
+            for line in lines:
+                item_text = re.sub(r"^[-*]\s+", "", line)
+                items.append(f"<li>{escape(item_text)}</li>")
+            chunks.append(f"<ul>{''.join(items)}</ul>")
+        else:
+            chunks.append(f"<p>{escape(' '.join(lines))}</p>")
+    return "\n".join(chunks)
+
+
+def _clean_display_text(value: str) -> str:
+    text = unescape(str(value or ""))
+    text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", " ")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", text)
+    text = re.sub(r"(?i)</\s*(p|div|li|h[1-6])\s*>", "\n", text)
+    text = re.sub(r"(?i)<\s*li\s*>", "- ", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
