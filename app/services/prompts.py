@@ -88,6 +88,7 @@ Reglas:
 - Si algo no se observa en el PDF, indicarlo en evidencia y asignar el nivel correspondiente.
 - Mantente especifico, formativo y respetuoso.
 - Si existe entrega relacionada, explica avances, continuidad, mejoras o repeticiones respecto a la entrega anterior.
+- Respeta estrictamente la estructura, encabezados y orden indicados en el perfil de retroalimentacion del gestor.
 - En retroalimentacion escribe texto plano. No uses etiquetas HTML, Markdown tecnico ni secuencias literales como \\n.
 """.strip()
 

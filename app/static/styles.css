@@ -362,7 +362,7 @@ pre {
 .feedback-output {
   margin-top: 16px;
   max-height: none;
-  padding: 16px;
+  padding: 20px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: linear-gradient(180deg, #ffffff 0, #f8fafc 100%);
@@ -372,9 +372,26 @@ pre {
   line-height: 1.65;
 }
 
+.feedback-heading {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid #dbeafe;
+  color: #1e3a8a;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.feedback-output .feedback-heading:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .feedback-output p + p,
 .feedback-output p + ul,
-.feedback-output ul + p {
+.feedback-output ul + p,
+.feedback-output .feedback-heading + p,
+.feedback-output .feedback-heading + ul {
   margin-top: 12px;
 }
 

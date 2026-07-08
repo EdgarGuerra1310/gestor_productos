@@ -745,6 +745,7 @@ def _loading_to_html(
           .replace(/<\\s*li\\s*>/gi, "- ")
           .replace(/<[^>]+>/g, "")
           .replace(/[ \\t]+/g, " ")
+          .replace(/\\b(Aciertos|Aspectos por mejorar|Recomendaciones|Preguntas reflexivas|Cierre):/gi, "\\n\\n$1:\\n")
           .replace(/\\n{{3,}}/g, "\\n\\n")
           .trim();
       }}
@@ -752,16 +753,48 @@ def _loading_to_html(
       function feedbackToHtml(value) {{
         const text = cleanDisplayText(value);
         if (!text) return '<p>No se recibio retroalimentacion textual.</p>';
-        return text
-          .split(/\\n{{2,}}/)
-          .map((block) => {{
-            const lines = block.split("\\n").map((line) => line.trim()).filter(Boolean);
-            if (lines.length && lines.every((line) => /^[-*]\\s+/.test(line))) {{
-              return `<ul>${{lines.map((line) => `<li>${{escapeHtml(line.replace(/^[-*]\\s+/, ""))}}</li>`).join("")}}</ul>`;
-            }}
-            return `<p>${{escapeHtml(lines.join(" "))}}</p>`;
-          }})
-          .join("");
+        const headings = /^(Aciertos|Aspectos por mejorar|Recomendaciones|Preguntas reflexivas|Cierre):$/i;
+        const lines = text.split("\\n").map((line) => line.trim()).filter(Boolean);
+        const html = [];
+        let paragraph = [];
+        let list = [];
+
+        function flushParagraph() {{
+          if (paragraph.length) {{
+            html.push(`<p>${{escapeHtml(paragraph.join(" "))}}</p>`);
+            paragraph = [];
+          }}
+        }}
+
+        function flushList() {{
+          if (list.length) {{
+            html.push(`<ul>${{list.map((item) => `<li>${{escapeHtml(item)}}</li>`).join("")}}</ul>`);
+            list = [];
+          }}
+        }}
+
+        for (const rawLine of lines) {{
+          const line = rawLine.replace(/^\\*\\*(.+)\\*\\*$/, "$1").trim();
+          if (headings.test(line)) {{
+            flushParagraph();
+            flushList();
+            html.push(`<h3 class="feedback-heading">${{escapeHtml(line)}}</h3>`);
+            continue;
+          }}
+
+          if (/^([-*•]|\\d+[.)])\\s+/.test(line)) {{
+            flushParagraph();
+            list.push(line.replace(/^([-*•]|\\d+[.)])\\s+/, ""));
+            continue;
+          }}
+
+          flushList();
+          paragraph.push(line);
+        }}
+
+        flushParagraph();
+        flushList();
+        return html.join("");
       }}
 
       function renderResult(data) {{
@@ -780,10 +813,10 @@ def _loading_to_html(
           <h2>{escape(nombre)}</h2>
           <!-- <p class="meta-line">ID de ejecucion: ${{escapeHtml(data.run_id)}}</p> -->
           ${{cacheLine}}
-          <p class="meta-line">Rol: ${{data.role === 1 ? "Validador" : "Usuario"}} &middot; Validacion: ${{data.validation_passed === false ? "rechazada" : "aprobada"}} ${{data.similarity_score != null ? "&middot; Similitud: " + escapeHtml(data.similarity_score) : ""}}</p>
+          <!--<p class="meta-line">Rol: ${{data.role === 1 ? "Validador" : "Usuario"}} &middot; Validacion: ${{data.validation_passed === false ? "rechazada" : "aprobada"}} ${{data.similarity_score != null ? "&middot; Similitud: " + escapeHtml(data.similarity_score) : ""}}</p>-->
           <p class="meta-line">Paginas: ${{escapeHtml(data.paginas_detectadas)}} &middot; Tablas: ${{escapeHtml(data.tablas_detectadas)}} &middot; Imagenes: ${{escapeHtml(data.imagenes_analizadas || 0)}} &middot; Tiempo: ${{escapeHtml(data.total_ms || "-")}} ms</p>
           <div class="feedback-output">${{feedbackToHtml(data.retroalimentacion)}}</div>
-          ${{rows ? `
+          <!--${{rows ? `
             <h3>Evaluacion por criterio</h3>
             <div class="table-wrap">
               <table>
@@ -799,7 +832,7 @@ def _loading_to_html(
                 <tbody>${{rows}}</tbody>
               </table>
             </div>
-          ` : ""}}
+          ` : ""}} -->
         `;
       }}
 
@@ -946,18 +979,44 @@ def _feedback_to_html(value: str) -> str:
         return "<p>No se recibio retroalimentacion textual.</p>"
 
     chunks: list[str] = []
-    for block in re.split(r"\n{2,}", text):
-        lines = [line.strip() for line in block.splitlines() if line.strip()]
-        if not lines:
+    paragraph: list[str] = []
+    items: list[str] = []
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            chunks.append(f"<p>{escape(' '.join(paragraph))}</p>")
+            paragraph.clear()
+
+    def flush_items() -> None:
+        if items:
+            rendered_items = "".join(f"<li>{escape(item)}</li>" for item in items)
+            chunks.append(f"<ul>{rendered_items}</ul>")
+            items.clear()
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush_paragraph()
+            flush_items()
             continue
-        if all(re.match(r"^[-*]\s+", line) for line in lines):
-            items = []
-            for line in lines:
-                item_text = re.sub(r"^[-*]\s+", "", line)
-                items.append(f"<li>{escape(item_text)}</li>")
-            chunks.append(f"<ul>{''.join(items)}</ul>")
-        else:
-            chunks.append(f"<p>{escape(' '.join(lines))}</p>")
+
+        line = re.sub(r"^\*\*(.+)\*\*$", r"\1", line).strip()
+        if _is_feedback_heading(line):
+            flush_paragraph()
+            flush_items()
+            chunks.append(f'<h3 class="feedback-heading">{escape(line)}</h3>')
+            continue
+
+        if re.match(r"^([-*•]|\d+[.)])\s+", line):
+            flush_paragraph()
+            items.append(re.sub(r"^([-*•]|\d+[.)])\s+", "", line))
+            continue
+
+        flush_items()
+        paragraph.append(line)
+
+    flush_paragraph()
+    flush_items()
     return "\n".join(chunks)
 
 
@@ -970,5 +1029,19 @@ def _clean_display_text(value: str) -> str:
     text = re.sub(r"(?i)<\s*li\s*>", "- ", text)
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(
+        r"(?i)\b(Aciertos|Aspectos por mejorar|Recomendaciones|Preguntas reflexivas|Cierre):",
+        r"\n\n\1:\n",
+        text,
+    )
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _is_feedback_heading(value: str) -> bool:
+    return bool(
+        re.match(
+            r"(?i)^(Aciertos|Aspectos por mejorar|Recomendaciones|Preguntas reflexivas|Cierre):$",
+            value.strip(),
+        )
+    )
