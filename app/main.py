@@ -332,6 +332,7 @@ def _process_pdf_path(
         )
 
     related_markdown = None
+    previous_feedback_context = None
     similarity_score = None
     if related_pdf_path is not None:
         related_extracted = extract_pdf_markdown(
@@ -357,6 +358,39 @@ def _process_pdf_path(
                 "cmid_relacionado": assistant.cmid_relacionado,
                 "related_caracteres_extraidos": len(related_markdown),
                 "similarity_score": similarity_score,
+            },
+        )
+        previous_run = get_latest_successful_run(
+            session,
+            cmid=assistant.cmid_relacionado,
+            user_id=user_id,
+            course_id=course_id,
+        )
+        previous_feedback_context = _build_previous_feedback_context(session, previous_run)
+        update_run(
+            session,
+            run,
+            extra={
+                **(run.extra or {}),
+                "related_feedback": {
+                    "found": previous_run is not None,
+                    "run_id": previous_run.id if previous_run else None,
+                    "has_context": bool(previous_feedback_context),
+                },
+            },
+        )
+        log_event(
+            session,
+            run.id,
+            "related_feedback_lookup",
+            (
+                "Retroalimentacion anterior encontrada para enfocar brechas"
+                if previous_feedback_context
+                else "No se encontro retroalimentacion anterior guardada; se usara solo la entrega previa"
+            ),
+            details={
+                "cmid_relacionado": assistant.cmid_relacionado,
+                "previous_run_id": previous_run.id if previous_run else None,
             },
         )
 
@@ -402,6 +436,7 @@ def _process_pdf_path(
         assistant=assistant,
         extracted_markdown=extracted.markdown,
         related_markdown=related_markdown,
+        previous_feedback_context=previous_feedback_context,
         similarity_score=similarity_score,
         total_timer=total_timer,
     )
@@ -416,6 +451,7 @@ def _process_pdf_path(
         course_id=course_id,
         image_data_urls=extracted.image_data_urls,
         related_markdown=related_markdown,
+        previous_feedback_context=previous_feedback_context,
         similarity_score=similarity_score,
     )
     gpt_ms = now_ms(gpt_timer)
@@ -488,6 +524,7 @@ def _validate_before_feedback(
     assistant,
     extracted_markdown: str,
     related_markdown: str | None,
+    previous_feedback_context: str | None,
     similarity_score: float | None,
     total_timer: float | None = None,
 ) -> None:
@@ -503,22 +540,17 @@ def _validate_before_feedback(
             similarity_score=similarity_score,
         )
 
-    if (
-        assistant.usa_cmid_relacionado
-        and assistant.validar_similitud
-        and similarity_score is not None
-        and similarity_score >= settings.similarity_threshold
-    ):
-        _reject_validation(
+    if assistant.usa_cmid_relacionado and assistant.validar_similitud and similarity_score is not None:
+        log_event(
             session,
-            run,
-            (
-                "La entrega actual es demasiado similar a la entrega relacionada. "
-                "No se dara retroalimentacion porque parece una repeticion de una subida anterior."
-            ),
-            total_timer,
-            relevance_score=None,
-            similarity_score=similarity_score,
+            run.id,
+            "validation",
+            "Similitud con entrega anterior calculada; la validacion verificara continuidad y mejoras",
+            details={
+                "similarity_score": similarity_score,
+                "similarity_threshold": settings.similarity_threshold,
+                "previous_feedback_context": bool(previous_feedback_context),
+            },
         )
 
     if assistant.validar_documento is False:
@@ -535,6 +567,7 @@ def _validate_before_feedback(
         assistant,
         extracted_markdown,
         related_markdown=related_markdown,
+        previous_feedback_context=previous_feedback_context,
         similarity_score=similarity_score,
     )
     update_run(
@@ -677,6 +710,47 @@ def _processing_result_from_cache(session: Session, run, nombre: str) -> Process
         retroalimentacion=run.retroalimentacion or "",
         evaluacion_rubrica=evaluations,
     )
+
+
+def _build_previous_feedback_context(session: Session, previous_run) -> str | None:
+    if previous_run is None:
+        return None
+
+    evaluations = get_rubric_evaluations(session, previous_run.id)
+    gap_lines: list[str] = []
+    for item in evaluations:
+        nivel = (item.nivel_obtenido or "").lower()
+        is_gap = nivel in {"inicio", "en_proceso"} or (item.score is not None and item.score < 3)
+        if not is_gap and not item.recomendacion:
+            continue
+        gap_lines.append(
+            "\n".join(
+                part
+                for part in (
+                    f"- Criterio {item.criterion_index}: {item.criterio}",
+                    f"  Nivel anterior: {item.nivel_obtenido or 'No indicado'}",
+                    f"  Evidencia anterior: {item.evidencia}" if item.evidencia else "",
+                    f"  Brecha/comentario anterior: {item.comentario}" if item.comentario else "",
+                    f"  Mejora solicitada: {item.recomendacion}" if item.recomendacion else "",
+                )
+                if part
+            )
+        )
+
+    feedback_text = _clean_display_text(previous_run.retroalimentacion or "")
+    sections = [
+        "RETROALIMENTACION ANTERIOR GUARDADA",
+        f"- run_id anterior: {previous_run.id}",
+        f"- cmid anterior: {previous_run.cmid}",
+    ]
+    if gap_lines:
+        sections.append("\nBRECHAS Y RECOMENDACIONES IDENTIFICADAS EN LA ENTREGA ANTERIOR")
+        sections.append("\n\n".join(gap_lines))
+    if feedback_text:
+        sections.append("\nTEXTO DE RETROALIMENTACION ANTERIOR")
+        sections.append(_clip_context(feedback_text, 12000))
+
+    return _clip_context("\n".join(sections), 18000)
 
 
 def _loading_to_html(
@@ -1036,6 +1110,12 @@ def _clean_display_text(value: str) -> str:
     )
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _clip_context(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars] + "\n\n[Contexto anterior recortado por longitud]"
 
 
 def _is_feedback_heading(value: str) -> bool:

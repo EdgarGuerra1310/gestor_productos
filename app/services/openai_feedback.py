@@ -39,6 +39,7 @@ def generate_feedback(
     course_id: int,
     image_data_urls: list[str] | None = None,
     related_markdown: str | None = None,
+    previous_feedback_context: str | None = None,
     similarity_score: float | None = None,
 ) -> FeedbackGenerationResult:
     if not settings.azure_openai_api_key:
@@ -60,6 +61,7 @@ def generate_feedback(
             course_id=course_id,
             image_data_urls=image_data_urls,
             related_markdown=related_markdown,
+            previous_feedback_context=previous_feedback_context,
             similarity_score=similarity_score,
         ),
         temperature=0.2,
@@ -85,6 +87,7 @@ def validate_submission(
     extracted_markdown: str,
     *,
     related_markdown: str | None = None,
+    previous_feedback_context: str | None = None,
     similarity_score: float | None = None,
 ) -> SubmissionValidationResult:
     if not settings.azure_openai_api_key:
@@ -102,6 +105,7 @@ def validate_submission(
             assistant=assistant,
             extracted_markdown=_clip(extracted_markdown),
             related_markdown=_clip(related_markdown or "") if related_markdown else None,
+            previous_feedback_context=_clip(previous_feedback_context or "") if previous_feedback_context else None,
             similarity_score=similarity_score,
         ),
         temperature=0,
