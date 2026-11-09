@@ -88,6 +88,85 @@ def _render_pdf_pages_as_data_urls(pdf_path: Path) -> list[str]:
     return data_urls
 
 
+def extract_docx_markdown(docx_path: Path) -> ExtractedPdf:
+    import docx
+
+    document = docx.Document(str(docx_path))
+    parts: list[str] = []
+    table_count = 0
+
+    for element in document.element.body.iterchildren():
+        if element.tag.endswith("}p"):
+            paragraph = next((p for p in document.paragraphs if p._p is element), None)
+            text = (paragraph.text if paragraph else "").strip()
+            if text:
+                parts.append(text)
+        elif element.tag.endswith("}tbl"):
+            table = next((t for t in document.tables if t._tbl is element), None)
+            if table is None:
+                continue
+            table_count += 1
+            rows = [[cell.text for cell in row.cells] for row in table.rows]
+            parts.append(f"\n\n### Tabla {table_count}\n")
+            parts.append(_table_to_markdown(rows))
+
+    return ExtractedPdf(
+        markdown="\n".join(part for part in parts if part),
+        pages=0,
+        tables=table_count,
+        image_data_urls=[],
+    )
+
+
+def extract_doc_markdown(doc_path: Path) -> ExtractedPdf:
+    """Extrae texto de un .doc antiguo convirtiendolo a .docx con Microsoft Word (COM)."""
+    try:
+        import pythoncom
+        import win32com.client
+    except ImportError as exc:
+        raise RuntimeError(
+            "No se pudo leer el archivo .doc porque el servidor no tiene Microsoft Word disponible. "
+            "Guardalo como .docx o .pdf y vuelve a subirlo."
+        ) from exc
+
+    import gc
+
+    docx_path = doc_path.with_name(doc_path.stem + "_convertido.docx")
+    pythoncom.CoInitialize()
+    word = None
+    try:
+        word = win32com.client.DispatchEx("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = 0  # wdAlertsNone: nunca mostrar dialogos que puedan colgar el proceso
+        document = word.Documents.Open(
+            str(doc_path.resolve()),
+            ReadOnly=True,
+            ConfirmConversions=False,
+            AddToRecentFiles=False,
+        )
+        try:
+            document.SaveAs(str(docx_path.resolve()), FileFormat=12)  # wdFormatXMLDocument (.docx)
+        finally:
+            document.Close(SaveChanges=0)
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudo convertir el archivo .doc con Microsoft Word. "
+            "Guardalo como .docx o .pdf y vuelve a subirlo."
+        ) from exc
+    finally:
+        if word is not None:
+            word.Quit(SaveChanges=0)
+            del word
+        gc.collect()
+        pythoncom.CoUninitialize()
+
+    try:
+        return extract_docx_markdown(docx_path)
+    finally:
+        if docx_path.exists():
+            docx_path.unlink()
+
+
 def _table_to_markdown(table: list[list[str | None]]) -> str:
     clean_rows = [
         [(_clean_cell(cell)) for cell in row]

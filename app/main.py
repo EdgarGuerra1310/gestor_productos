@@ -1,17 +1,30 @@
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import re
 from html import escape, unescape
 from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session
 
 from app.config import settings
 from app.database import create_db_and_tables, get_session
-from app.schemas import AssistantConfigIn, AssistantConfigOut, ProcessingResult
+from app.models import FeedbackRating, ProcessingRun, ProcessingView, Program
+from app.schemas import (
+    AssistantConfigIn,
+    AssistantConfigOut,
+    AssistantDraftOut,
+    CourseIn,
+    CourseOut,
+    MoodleActivityOut,
+    ProcessingResult,
+    ProgramIn,
+    ProgramOut,
+    RatingIn,
+)
 from app.services.analytics import (
     create_run,
     finish_run,
@@ -25,10 +38,28 @@ from app.services.analytics import (
     start_timer,
     update_run,
 )
-from app.services.assistant_manager import create_assistant, get_assistant_or_404, list_assistants, upsert_assistant
+from app.services.assistant_manager import (
+    create_assistant,
+    find_assistant_by_cmid,
+    get_assistant_by_cmid_or_404,
+    get_assistant_or_404,
+    get_dependencies_for_cmid,
+    list_assistants,
+    to_assistant_out,
+    update_assistant,
+)
 from app.services.moodle import MoodleClient, MoodleDownloadError
-from app.services.openai_feedback import generate_feedback, validate_submission
-from app.services.pdf_extractor import extract_pdf_markdown
+from app.services.openai_feedback import generate_assistant_draft, generate_feedback, validate_submission
+from app.services.pdf_extractor import extract_doc_markdown, extract_docx_markdown, extract_pdf_markdown
+from app.services.programs import create_course, create_program, list_courses, list_programs
+from app.services.reports import (
+    ReportFilters,
+    analyze_pending_sentiments,
+    build_summary,
+    get_run_report,
+    list_runs,
+    runs_to_csv,
+)
 from app.services.similarity import text_similarity
 
 app = FastAPI(title=settings.app_name)
@@ -66,27 +97,224 @@ def get_asistentes(session: Session = Depends(get_session)):
     return list_assistants(session)
 
 
-@app.get("/asistentes/{cmid}", response_model=AssistantConfigOut)
-def get_asistente(cmid: int, session: Session = Depends(get_session)):
-    return get_assistant_or_404(session, cmid)
+@app.get("/asistentes/por-cmid/{cmid}", response_model=AssistantConfigOut)
+def get_asistente_por_cmid(cmid: int, session: Session = Depends(get_session)):
+    assistant = find_assistant_by_cmid(session, cmid)
+    if assistant is None:
+        raise HTTPException(status_code=404, detail=f"No hay un asistente configurado para el cmid {cmid}.")
+    return to_assistant_out(session, assistant)
 
 
-@app.post("/asistentes/{cmid}", response_model=AssistantConfigOut, status_code=201)
+@app.post("/asistentes/generar-borrador", response_model=AssistantDraftOut)
+async def post_generar_borrador(files: list[UploadFile] = File(...)):
+    documents: list[tuple[str, str]] = []
+    for upload in files:
+        content = await upload.read()
+        filename = upload.filename or "documento"
+        extension = _validate_evidence_upload(filename, content)
+        temp_path = settings.temp_dir / f"borrador_{abs(hash(filename))}{extension}"
+        settings.temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_path.write_bytes(content)
+        try:
+            if extension == ".docx":
+                extracted = extract_docx_markdown(temp_path)
+            elif extension == ".doc":
+                try:
+                    extracted = extract_doc_markdown(temp_path)
+                except RuntimeError as exc:
+                    raise HTTPException(status_code=400, detail=f"{filename}: {exc}") from exc
+            else:
+                extracted = extract_pdf_markdown(temp_path, include_text=True, include_tables=True, include_images=False)
+            documents.append((filename, extracted.markdown))
+        finally:
+            _cleanup_pdf(temp_path)
+
+    if not documents:
+        raise HTTPException(status_code=400, detail="No se pudo leer contenido de los documentos subidos.")
+
+    return generate_assistant_draft(documents)
+
+
+@app.get("/asistentes/{assistant_id}", response_model=AssistantConfigOut)
+def get_asistente(assistant_id: int, session: Session = Depends(get_session)):
+    assistant = get_assistant_or_404(session, assistant_id)
+    return to_assistant_out(session, assistant)
+
+
+@app.post("/asistentes", response_model=AssistantConfigOut, status_code=201)
 def post_asistente(
-    cmid: int,
     payload: AssistantConfigIn,
     session: Session = Depends(get_session),
 ):
-    return create_assistant(session, cmid, payload)
+    assistant = create_assistant(session, payload)
+    return to_assistant_out(session, assistant)
 
 
-@app.put("/asistentes/{cmid}", response_model=AssistantConfigOut)
+@app.put("/asistentes/{assistant_id}", response_model=AssistantConfigOut)
 def put_asistente(
-    cmid: int,
+    assistant_id: int,
     payload: AssistantConfigIn,
     session: Session = Depends(get_session),
 ):
-    return upsert_assistant(session, cmid, payload)
+    assistant = update_assistant(session, assistant_id, payload)
+    return to_assistant_out(session, assistant)
+
+
+@app.get("/moodle/cursos/{course_id}/actividades", response_model=list[MoodleActivityOut])
+async def get_moodle_actividades(
+    course_id: int,
+    q: str | None = Query(None),
+    solo_tareas: bool = Query(True, description="Si es true, solo devuelve actividades tipo Tarea (assign)."),
+):
+    try:
+        activities = await MoodleClient().list_course_activities(course_id, only_tasks=solo_tareas)
+    except MoodleDownloadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if q:
+        needle = q.strip().lower()
+        activities = [item for item in activities if needle in item["name"].lower() or needle == str(item["cmid"])]
+    return activities
+
+
+@app.get("/programas", response_model=list[ProgramOut])
+def get_programas(session: Session = Depends(get_session)):
+    return list_programs(session)
+
+
+@app.post("/programas", response_model=ProgramOut, status_code=201)
+def post_programa(payload: ProgramIn, session: Session = Depends(get_session)):
+    return create_program(session, payload.nombre)
+
+
+@app.get("/cursos", response_model=list[CourseOut])
+def get_cursos(programa_id: int | None = Query(None), session: Session = Depends(get_session)):
+    return list_courses(session, programa_id)
+
+
+@app.post("/cursos", response_model=CourseOut, status_code=201)
+async def post_curso(payload: CourseIn, session: Session = Depends(get_session)):
+    course = await create_course(session, payload.programa_id, payload.course_id)
+    program = session.get(Program, course.programa_id)
+    return CourseOut(
+        id=course.id,
+        programa_id=course.programa_id,
+        programa_nombre=program.nombre if program else None,
+        course_id=course.course_id,
+        nombre=course.nombre,
+    )
+
+
+def _run_for_rating(session: Session, run_id: str, user_id: int) -> ProcessingRun:
+    run = session.get(ProcessingRun, run_id)
+    if run is None or run.status != "success":
+        raise HTTPException(status_code=404, detail="No se encontro la retroalimentacion a valorar.")
+    if run.user_id != user_id:
+        raise HTTPException(status_code=403, detail="La retroalimentacion no corresponde a este usuario.")
+    return run
+
+
+@app.get("/retroalimentaciones/{run_id}/valoracion")
+def get_valoracion(run_id: str, user_id: int = Query(...), session: Session = Depends(get_session)):
+    _run_for_rating(session, run_id, user_id)
+    rating = session.get(FeedbackRating, run_id)
+    return {"rating": rating.rating if rating else None, "comentario": rating.comentario if rating else None}
+
+
+@app.put("/retroalimentaciones/{run_id}/valoracion")
+def put_valoracion(run_id: str, payload: RatingIn, session: Session = Depends(get_session)):
+    run = _run_for_rating(session, run_id, payload.user_id)
+    comentario = (payload.comentario or "").strip() or None
+    rating = session.get(FeedbackRating, run_id)
+    if rating is None:
+        rating = FeedbackRating(
+            run_id=run_id,
+            cmid=run.cmid,
+            user_id=run.user_id,
+            course_id=run.course_id,
+            rating=payload.rating,
+            comentario=comentario,
+        )
+    else:
+        rating.rating = payload.rating
+        rating.comentario = comentario
+        rating.updated_at = datetime.now(timezone.utc)
+    session.add(rating)
+    session.commit()
+    return {"rating": rating.rating, "comentario": rating.comentario}
+
+
+def report_filters(
+    desde: date | None = Query(None),
+    hasta: date | None = Query(None),
+    assistant_id: int | None = Query(None),
+    programa_id: int | None = Query(None),
+    curso_id: int | None = Query(None),
+    cmid: int | None = Query(None),
+    rol: int | None = Query(None, ge=0, le=1),
+    estado: str | None = Query(None),
+) -> ReportFilters:
+    return ReportFilters(
+        desde=desde,
+        hasta=hasta,
+        assistant_id=assistant_id,
+        programa_id=programa_id,
+        curso_id=curso_id,
+        cmid=cmid,
+        rol=rol,
+        estado=estado or None,
+    )
+
+
+@app.get("/reportes/resumen")
+def get_reporte_resumen(filters: ReportFilters = Depends(report_filters), session: Session = Depends(get_session)):
+    return build_summary(session, filters)
+
+
+@app.get("/reportes/ejecuciones")
+def get_reporte_ejecuciones(
+    filters: ReportFilters = Depends(report_filters),
+    q: str | None = Query(None),
+    sentimiento: str | None = Query(None),
+    limit: int = Query(25, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+):
+    return list_runs(session, filters, search=q, sentimiento=sentimiento, limit=limit, offset=offset)
+
+
+@app.get("/reportes/ejecuciones.csv")
+def get_reporte_ejecuciones_csv(
+    filters: ReportFilters = Depends(report_filters),
+    session: Session = Depends(get_session),
+):
+    content = "﻿" + runs_to_csv(session, filters)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="reporte_ejecuciones.csv"'},
+    )
+
+
+@app.get("/reportes/ejecuciones/{run_id}")
+def get_reporte_ejecucion(run_id: str, session: Session = Depends(get_session)):
+    report = get_run_report(session, run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No se encontro la ejecucion solicitada.")
+    return report
+
+
+@app.post("/reportes/sentimiento/analizar")
+def post_reporte_sentimiento(
+    filters: ReportFilters = Depends(report_filters),
+    limite: int = Query(12, ge=1, le=40),
+    session: Session = Depends(get_session),
+):
+    # Funcion sincrona a proposito: FastAPI la ejecuta en un hilo y no bloquea el resto de la app.
+    try:
+        return analyze_pending_sentiments(session, filters, limit=limite)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/analitica")
@@ -129,6 +357,10 @@ async def procesar_producto(
             course_id=course_id,
         )
         if cached_run is not None:
+            session.add(
+                ProcessingView(run_id=cached_run.id, cmid=cmid, user_id=user_id, course_id=course_id)
+            )
+            session.commit()
             return _processing_result_from_cache(session, cached_run, nombre)
 
     total_timer = start_timer()
@@ -151,12 +383,20 @@ async def procesar_producto(
         role=role,
     )
     pdf_path: Path | None = None
-    related_pdf_path: Path | None = None
+    related_pdf_paths: list[tuple[int, Path]] = []
 
     try:
         update_run(session, run, stage="assistant_lookup")
-        assistant = get_assistant_or_404(session, cmid)
-        log_event(session, run.id, "assistant_lookup", "Configuracion CMID encontrada")
+        assistant = get_assistant_by_cmid_or_404(session, cmid)
+        # Cada CMID del asistente tiene sus propias dependencias.
+        related_cmids = get_dependencies_for_cmid(session, cmid)
+        log_event(
+            session,
+            run.id,
+            "assistant_lookup",
+            "Configuracion CMID encontrada",
+            details={"cmids_relacionados": related_cmids},
+        )
 
         moodle_client = MoodleClient()
         update_run(session, run, stage="moodle_download", moodle_service_url=moodle_client.service_url)
@@ -182,30 +422,28 @@ async def procesar_producto(
             moodle_ms=moodle_ms,
             pdf_filename=pdf_path.name,
             pdf_size_bytes=pdf_path.stat().st_size,
-            cmid_relacionado=assistant.cmid_relacionado if assistant.usa_cmid_relacionado else None,
+            cmids_relacionados=related_cmids,
         )
 
-        if assistant.usa_cmid_relacionado and not assistant.cmid_relacionado:
-            raise RuntimeError("El CMID esta configurado como dependiente, pero no tiene cmid_relacionado.")
-
-        if assistant.usa_cmid_relacionado and assistant.cmid_relacionado:
-            related_timer = start_timer()
-            update_run(session, run, stage="related_moodle_download")
-            related_pdf_path = await moodle_client.download_submission_pdf(
-                cmid=assistant.cmid_relacionado,
-                user_id=user_id,
-                course_id=course_id,
-                target_dir=settings.temp_dir,
-            )
-            log_event(
-                session,
-                run.id,
-                "related_moodle_download",
-                "PDF relacionado descargado desde Moodle",
-                elapsed_ms=now_ms(related_timer),
-                details={"cmid_relacionado": assistant.cmid_relacionado, "pdf_filename": related_pdf_path.name},
-            )
-            update_run(session, run, related_pdf_filename=related_pdf_path.name)
+        if related_cmids:
+            for related_cmid in related_cmids:
+                related_timer = start_timer()
+                update_run(session, run, stage="related_moodle_download")
+                related_path = await moodle_client.download_submission_pdf(
+                    cmid=related_cmid,
+                    user_id=user_id,
+                    course_id=course_id,
+                    target_dir=settings.temp_dir,
+                )
+                log_event(
+                    session,
+                    run.id,
+                    "related_moodle_download",
+                    "PDF relacionado descargado desde Moodle",
+                    elapsed_ms=now_ms(related_timer),
+                    details={"cmid_relacionado": related_cmid, "pdf_filename": related_path.name},
+                )
+                related_pdf_paths.append((related_cmid, related_path))
 
         result = _process_pdf_path(
             session,
@@ -216,7 +454,7 @@ async def procesar_producto(
             user_id,
             course_id,
             nombre,
-            related_pdf_path=related_pdf_path,
+            related_pdf_paths=related_pdf_paths,
             total_timer=total_timer,
         )
 
@@ -254,7 +492,8 @@ async def procesar_producto(
         return HTMLResponse(_error_to_html(str(exc), cmid, user_id, course_id, nombre, run.id), status_code=500)
     finally:
         _cleanup_pdf(pdf_path)
-        _cleanup_pdf(related_pdf_path)
+        for _, related_path in related_pdf_paths:
+            _cleanup_pdf(related_path)
 
 
 @app.post("/procesar_producto_pdf", response_model=ProcessingResult)
@@ -279,7 +518,7 @@ async def procesar_producto_pdf(
     pdf_path = settings.temp_dir / f"upload_{cmid}_{user_id}.pdf"
 
     try:
-        assistant = get_assistant_or_404(session, cmid)
+        assistant = get_assistant_by_cmid_or_404(session, cmid)
         content = await file.read()
         _validate_pdf_upload(file.filename or "", content)
         pdf_path.write_bytes(content)
@@ -311,7 +550,7 @@ def _process_pdf_path(
     user_id: int,
     course_id: int,
     nombre: str,
-    related_pdf_path: Path | None = None,
+    related_pdf_paths: list[tuple[int, Path]] | None = None,
     total_timer: float | None = None,
 ) -> ProcessingResult:
     update_run(session, run, stage="pdf_extraction")
@@ -331,10 +570,8 @@ def _process_pdf_path(
             "No se pudo extraer contenido del PDF. Si es escaneado, activa imagenes o OCR."
         )
 
-    related_markdown = None
-    previous_feedback_context = None
-    similarity_score = None
-    if related_pdf_path is not None:
+    related_items: list[dict] = []
+    for related_cmid, related_pdf_path in related_pdf_paths or []:
         related_extracted = extract_pdf_markdown(
             related_pdf_path,
             include_text=include_text,
@@ -343,42 +580,24 @@ def _process_pdf_path(
         )
         related_markdown = related_extracted.markdown
         similarity_score = text_similarity(extracted.markdown, related_markdown)
-        update_run(
-            session,
-            run,
-            related_caracteres_extraidos=len(related_markdown),
-            similarity_score=similarity_score,
-        )
         log_event(
             session,
             run.id,
             "related_pdf_extraction",
             "Entrega relacionada extraida y comparada",
             details={
-                "cmid_relacionado": assistant.cmid_relacionado,
+                "cmid_relacionado": related_cmid,
                 "related_caracteres_extraidos": len(related_markdown),
                 "similarity_score": similarity_score,
             },
         )
         previous_run = get_latest_successful_run(
             session,
-            cmid=assistant.cmid_relacionado,
+            cmid=related_cmid,
             user_id=user_id,
             course_id=course_id,
         )
         previous_feedback_context = _build_previous_feedback_context(session, previous_run)
-        update_run(
-            session,
-            run,
-            extra={
-                **(run.extra or {}),
-                "related_feedback": {
-                    "found": previous_run is not None,
-                    "run_id": previous_run.id if previous_run else None,
-                    "has_context": bool(previous_feedback_context),
-                },
-            },
-        )
         log_event(
             session,
             run.id,
@@ -389,8 +608,46 @@ def _process_pdf_path(
                 else "No se encontro retroalimentacion anterior guardada; se usara solo la entrega previa"
             ),
             details={
-                "cmid_relacionado": assistant.cmid_relacionado,
+                "cmid_relacionado": related_cmid,
                 "previous_run_id": previous_run.id if previous_run else None,
+            },
+        )
+        related_items.append(
+            {
+                "cmid": related_cmid,
+                "markdown": related_markdown,
+                "similarity_score": similarity_score,
+                "previous_feedback_context": previous_feedback_context,
+                "caracteres_extraidos": len(related_markdown),
+                "pdf_filename": related_pdf_path.name,
+            }
+        )
+
+    similarity_scores = [item["similarity_score"] for item in related_items if item["similarity_score"] is not None]
+    max_similarity_score = max(similarity_scores) if similarity_scores else None
+    if related_items:
+        update_run(
+            session,
+            run,
+            similarity_score=max_similarity_score,
+            related_details=[
+                {
+                    "cmid": item["cmid"],
+                    "pdf_filename": item["pdf_filename"],
+                    "caracteres_extraidos": item["caracteres_extraidos"],
+                    "similarity_score": item["similarity_score"],
+                }
+                for item in related_items
+            ],
+            extra={
+                **(run.extra or {}),
+                "related_feedback": [
+                    {
+                        "cmid": item["cmid"],
+                        "has_context": bool(item["previous_feedback_context"]),
+                    }
+                    for item in related_items
+                ],
             },
         )
 
@@ -435,9 +692,7 @@ def _process_pdf_path(
         run=run,
         assistant=assistant,
         extracted_markdown=extracted.markdown,
-        related_markdown=related_markdown,
-        previous_feedback_context=previous_feedback_context,
-        similarity_score=similarity_score,
+        related_items=related_items,
         total_timer=total_timer,
     )
 
@@ -449,10 +704,9 @@ def _process_pdf_path(
         student_name=nombre,
         user_id=user_id,
         course_id=course_id,
+        cmid=cmid,
         image_data_urls=extracted.image_data_urls,
-        related_markdown=related_markdown,
-        previous_feedback_context=previous_feedback_context,
-        similarity_score=similarity_score,
+        related_items=related_items,
     )
     gpt_ms = now_ms(gpt_timer)
 
@@ -492,8 +746,8 @@ def _process_pdf_path(
         tablas_detectadas=extracted.tables,
         imagenes_analizadas=len(extracted.image_data_urls),
         caracteres_extraidos=len(extracted.markdown),
-        cmid_relacionado=assistant.cmid_relacionado if assistant.usa_cmid_relacionado else None,
-        similarity_score=similarity_score,
+        cmids_relacionados=[item["cmid"] for item in related_items],
+        similarity_score=max_similarity_score,
         validation_passed=True,
         validation_reason=run.validation_reason,
         relevance_score=run.relevance_score,
@@ -517,18 +771,48 @@ def _validate_pdf_upload(filename: str, content: bytes) -> None:
         raise HTTPException(status_code=400, detail=f"El PDF supera {settings.max_pdf_mb} MB.")
 
 
+def _validate_evidence_upload(filename: str, content: bytes) -> str:
+    """Valida un documento de evidencia (PDF o Word) y devuelve su extension."""
+    lower_name = filename.lower()
+    max_bytes = settings.max_pdf_mb * 1024 * 1024
+
+    if lower_name.endswith(".pdf"):
+        if not content.startswith(b"%PDF"):
+            raise HTTPException(status_code=400, detail=f"El archivo {filename} no parece ser un PDF valido.")
+        extension = ".pdf"
+    elif lower_name.endswith(".docx"):
+        if not content.startswith(b"PK"):
+            raise HTTPException(status_code=400, detail=f"El archivo {filename} no parece ser un Word (.docx) valido.")
+        extension = ".docx"
+    elif lower_name.endswith(".doc"):
+        if not content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+            raise HTTPException(status_code=400, detail=f"El archivo {filename} no parece ser un Word (.doc) valido.")
+        extension = ".doc"
+    else:
+        raise HTTPException(
+            status_code=400, detail=f"El archivo {filename} debe ser PDF (.pdf) o Word (.doc / .docx)."
+        )
+
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=400, detail=f"El archivo {filename} supera {settings.max_pdf_mb} MB.")
+
+    return extension
+
+
 def _validate_before_feedback(
     *,
     session: Session,
     run,
     assistant,
     extracted_markdown: str,
-    related_markdown: str | None,
-    previous_feedback_context: str | None,
-    similarity_score: float | None,
+    related_items: list[dict],
     total_timer: float | None = None,
 ) -> None:
     update_run(session, run, stage="validation")
+
+    similarity_scores = [item["similarity_score"] for item in related_items if item["similarity_score"] is not None]
+    max_similarity_score = max(similarity_scores) if similarity_scores else None
+    has_previous_feedback_context = any(item.get("previous_feedback_context") for item in related_items)
 
     if len(extracted_markdown.strip()) < settings.min_extracted_chars:
         _reject_validation(
@@ -537,19 +821,19 @@ def _validate_before_feedback(
             "El documento no contiene suficiente informacion legible para validar el producto. No se dara retroalimentacion.",
             total_timer,
             relevance_score=0,
-            similarity_score=similarity_score,
+            similarity_score=max_similarity_score,
         )
 
-    if assistant.usa_cmid_relacionado and assistant.validar_similitud and similarity_score is not None:
+    if related_items and assistant.validar_similitud and max_similarity_score is not None:
         log_event(
             session,
             run.id,
             "validation",
-            "Similitud con entrega anterior calculada; la validacion verificara continuidad y mejoras",
+            "Similitud con entregas relacionadas calculada; la validacion verificara continuidad y mejoras",
             details={
-                "similarity_score": similarity_score,
+                "similarity_score": max_similarity_score,
                 "similarity_threshold": settings.similarity_threshold,
-                "previous_feedback_context": bool(previous_feedback_context),
+                "previous_feedback_context": has_previous_feedback_context,
             },
         )
 
@@ -559,16 +843,14 @@ def _validate_before_feedback(
             run,
             validation_passed=True,
             validation_reason="Validacion documental desactivada en la configuracion del CMID.",
-            similarity_score=similarity_score,
+            similarity_score=max_similarity_score,
         )
         return
 
     validation = validate_submission(
         assistant,
         extracted_markdown,
-        related_markdown=related_markdown,
-        previous_feedback_context=previous_feedback_context,
-        similarity_score=similarity_score,
+        related_items=related_items,
     )
     update_run(
         session,
@@ -576,7 +858,7 @@ def _validate_before_feedback(
         validation_passed=validation.is_valid,
         validation_reason=validation.reason,
         relevance_score=validation.relevance_score,
-        similarity_score=validation.similarity_score or similarity_score,
+        similarity_score=validation.similarity_score or max_similarity_score,
         extra={
             **(run.extra or {}),
             "validation": {
@@ -594,7 +876,7 @@ def _validate_before_feedback(
             "is_valid": validation.is_valid,
             "reason": validation.reason,
             "relevance_score": validation.relevance_score,
-            "similarity_score": validation.similarity_score or similarity_score,
+            "similarity_score": validation.similarity_score or max_similarity_score,
         },
     )
     if not validation.is_valid:
@@ -604,7 +886,7 @@ def _validate_before_feedback(
             f"No se dara retroalimentacion: {validation.reason}",
             total_timer,
             relevance_score=validation.relevance_score,
-            similarity_score=validation.similarity_score or similarity_score,
+            similarity_score=validation.similarity_score or max_similarity_score,
         )
 
 
@@ -696,7 +978,7 @@ def _processing_result_from_cache(session: Session, run, nombre: str) -> Process
         tablas_detectadas=run.tablas_detectadas or 0,
         imagenes_analizadas=run.imagenes_analizadas or 0,
         caracteres_extraidos=run.caracteres_extraidos or 0,
-        cmid_relacionado=run.cmid_relacionado,
+        cmids_relacionados=run.cmids_relacionados or [],
         similarity_score=run.similarity_score,
         validation_passed=run.validation_passed,
         validation_reason=run.validation_reason,
@@ -778,7 +1060,7 @@ def _loading_to_html(
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Procesando producto</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=13" />
   </head>
   <body>
     <header class="topbar user-topbar">
@@ -795,6 +1077,7 @@ def _loading_to_html(
       </section>
       <section id="result-panel" class="panel user-result-panel hidden"></section>
     </main>
+    <script src="/static/valoracion.js?v=1"></script>
     <script>
       const apiUrl = {api_url!r};
       const loadingPanel = document.querySelector("#loading-panel");
@@ -908,6 +1191,9 @@ def _loading_to_html(
             </div>
           ` : ""}} -->
         `;
+        if (window.mountRating && data.role !== 1) {{
+          window.mountRating(resultPanel, data);
+        }}
       }}
 
       function renderError(message, runId) {{
@@ -984,7 +1270,7 @@ def _result_to_html(result: ProcessingResult) -> str:
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Retroalimentacion del producto</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=13" />
   </head>
   <body>
     <header class="topbar user-topbar">
@@ -1026,7 +1312,7 @@ def _error_to_html(
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>No se pudo procesar el producto</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=13" />
   </head>
   <body>
     <header class="topbar user-topbar">

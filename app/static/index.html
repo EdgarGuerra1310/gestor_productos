@@ -4,107 +4,277 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Gestor de CMID Moodle</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=14" />
   </head>
   <body class="manager-page">
     <header class="topbar manager-topbar">
       <div>
         <h1>Gestor de CMID Moodle</h1>
-        <p>Configura previamente cada actividad para que el enlace del usuario procese su PDF automaticamente.</p>
+        <p>Configura asistentes, prueba entregas y analiza el uso y los resultados de cada uno.</p>
       </div>
       <a class="docs-link" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
     </header>
 
-    <main class="layout">
+    <nav class="module-nav" aria-label="Modulos del gestor">
+      <button type="button" class="module-tab active" data-module="asistentes">
+        <span class="module-tab-title">Asistentes</span>
+        <span class="module-tab-sub">Configuracion</span>
+      </button>
+      <button type="button" class="module-tab" data-module="pruebas">
+        <span class="module-tab-title">Pruebas</span>
+        <span class="module-tab-sub">Probar desde Moodle</span>
+      </button>
+      <button type="button" class="module-tab" data-module="reporteria">
+        <span class="module-tab-title">Reporteria</span>
+        <span class="module-tab-sub">Uso, resultados y analitica</span>
+      </button>
+    </nav>
+
+    <main class="app-main">
+      <section class="module" id="mod-asistentes" data-module-panel="asistentes">
+      <div class="master-detail">
+      <aside class="panel list-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Asistentes</h2>
+            <p class="panel-subtitle" id="assistant-count-label">Cargando...</p>
+          </div>
+          <button id="refresh-list" type="button">Actualizar</button>
+        </div>
+        <input type="text" id="assistant-search" placeholder="Buscar por nombre, CMID, programa o curso..." />
+        <div id="assistant-list" class="assistant-list assistant-list-scroll assistant-list-compact"></div>
+      </aside>
+
       <section class="panel manager-panel">
         <div class="panel-header">
-          <h2>1. Configurar CMID</h2>
-          <button id="load-demo" type="button">Cargar ejemplo</button>
+          <div>
+            <h2>Configurar asistente</h2>
+            <p class="panel-subtitle">Datos, CMID, clasificacion, dependencias y rubrica.</p>
+          </div>
+          <div class="panel-header-actions">
+            <button id="new-assistant-btn" type="button">Nuevo</button>
+            <button id="duplicate-assistant-btn" type="button" disabled>Duplicar</button>
+            <button id="load-demo" type="button">Cargar ejemplo</button>
+          </div>
         </div>
 
-        <form id="assistant-form">
-          <label>
-            CMID de Moodle
-            <input id="cmid" name="cmid" type="number" min="1" value="194522" required />
-          </label>
+        <div class="mode-badge-row">
+          <span id="form-mode-badge" class="mode-badge mode-badge-create">Nuevo asistente</span>
+        </div>
 
-          <label>
-            Nombre de la configuracion
-            <input id="nombre-asistente" name="nombre" type="text" required />
-          </label>
+        <fieldset class="form-section cmid-entry" id="sec-cmids">
+          <legend><span class="section-index">1</span>Busca el CMID desde Moodle (por codigo de aula)</legend>
+          <p class="meta-line">Escribe el codigo de aula (course ID / curid), elige una o varias tareas y se agregan aqui separadas por coma. Puedes buscar en otra aula despues y se van sumando a la misma lista.</p>
 
-          <label>
-            Descripcion del producto
-            <textarea id="descripcion-producto" name="descripcion_producto" rows="7" required></textarea>
-          </label>
+          <div class="chip-list" id="cmids-chips"></div>
 
-          <label>
-            Contexto del curso, unidades y sesiones
-            <textarea id="contexto-curso" name="contexto_curso" rows="7" placeholder="Ejemplo: Unidad 1, sesion 2: se desarrolla el calendario comunal..."></textarea>
-          </label>
-
-          <label>
-            Ejemplo o muestra del producto esperado
-            <textarea id="ejemplo-producto" name="ejemplo_producto" rows="8" placeholder="Pega aqui un ejemplo modelo, estructura esperada o muestra de referencia."></textarea>
-          </label>
-
-          <fieldset class="checkbox-group">
-            <legend>Contenido esperado del producto</legend>
-            <label class="check-row">
-              <input id="analiza-texto" name="analiza_texto" type="checkbox" checked />
-              Texto
-            </label>
-            <label class="check-row">
-              <input id="analiza-tablas" name="analiza_tablas" type="checkbox" checked />
-              Tablas o cuadros
-            </label>
-            <label class="check-row">
-              <input id="analiza-imagenes" name="analiza_imagenes" type="checkbox" />
-              Imagenes, diagramas o capturas
-            </label>
-          </fieldset>
-
-          <fieldset class="checkbox-group">
-            <legend>Dependencia y validacion</legend>
-            <label class="check-row">
-              <input id="usa-cmid-relacionado" name="usa_cmid_relacionado" type="checkbox" />
-              Este producto depende de un CMID anterior
+          <div class="grid-two">
+            <label>
+              Codigo de aula (Course ID / curid)
+              <input type="number" id="cmids-course-id" min="1" placeholder="Ejemplo: 2440" />
             </label>
             <label>
-              CMID relacionado
-              <input id="cmid-relacionado" name="cmid_relacionado" type="number" min="1" placeholder="Ejemplo: 100" />
+              Filtrar por texto (opcional)
+              <input type="text" id="cmids-filter-text" placeholder="Ejemplo: calendario" />
             </label>
-            <label class="check-row">
-              <input id="validar-documento" name="validar_documento" type="checkbox" checked />
-              Validar documento antes de retroalimentar
+          </div>
+          <button type="button" id="cmids-search-btn" class="secondary">Buscar tareas</button>
+          <p class="meta-line">Se listan solo las actividades tipo Tarea (assign) del aula.</p>
+          <div class="moodle-results" id="cmids-results"></div>
+
+          <details class="accordion">
+            <summary>O escribe el CMID manualmente</summary>
+            <div class="accordion-body">
+              <div class="chip-input-row">
+                <input type="text" id="cmids-manual" placeholder="Escribe CMID separados por coma y presiona Enter" />
+                <button type="button" id="cmids-manual-add">Agregar</button>
+              </div>
+            </div>
+          </details>
+        </fieldset>
+
+        <nav class="section-nav" aria-label="Secciones del formulario">
+          <a href="#sec-cmids">CMID</a>
+          <a href="#sec-rubrica">Rubrica e IA</a>
+          <a href="#sec-datos">Datos</a>
+          <a href="#sec-clasificacion">Programa / Curso</a>
+          <a href="#sec-contenido">Contenido</a>
+          <a href="#sec-dependencia">Dependencia</a>
+        </nav>
+
+        <form id="assistant-form">
+          <fieldset class="form-section" id="sec-rubrica">
+            <legend><span class="section-index">2</span>Rubrica, perfil e IA</legend>
+
+            <div class="ai-box">
+              <p class="ai-box-title">Generar borrador con IA (opcional)</p>
+              <p class="meta-line">Sube documentos de evidencia y la IA propone descripcion, contexto, ejemplo, rubrica y perfil. Los campos que complete apareceran mas abajo, en "Datos basicos".</p>
+              <label>
+                Documentos de evidencia (PDF o Word)
+                <input
+                  type="file"
+                  id="evidencia-files"
+                  accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  multiple
+                />
+              </label>
+              <button type="button" id="generar-borrador-btn" class="secondary">Generar borrador con IA</button>
+              <p id="borrador-status" class="meta-line"></p>
+            </div>
+
+            <label>
+              Rubrica en JSON
+              <textarea id="rubrica" name="rubrica" rows="12" required></textarea>
             </label>
-            <label class="check-row">
-              <input id="validar-similitud" name="validar_similitud" type="checkbox" checked />
-              Validar que no repita la entrega relacionada
+
+            <label>
+              Perfil de retroalimentacion
+              <textarea id="perfil" name="perfil_retroalimentacion" rows="7" required></textarea>
+            </label>
+
+            <label>
+              Deployment Azure OpenAI opcional
+              <input id="modelo" name="modelo" type="text" placeholder="Ejemplo: gpt-4o" />
             </label>
           </fieldset>
 
-          <label>
-            Rubrica en JSON
-            <textarea id="rubrica" name="rubrica" rows="12" required></textarea>
-          </label>
+          <fieldset class="form-section" id="sec-datos">
+            <legend><span class="section-index">3</span>Datos basicos</legend>
 
-          <label>
-            Perfil de retroalimentacion
-            <textarea id="perfil" name="perfil_retroalimentacion" rows="8" required></textarea>
-          </label>
+            <label>
+              Nombre de la configuracion
+              <input id="nombre-asistente" name="nombre" type="text" required />
+            </label>
 
-          <label>
-            Deployment Azure OpenAI opcional
-            <input id="modelo" name="modelo" type="text" placeholder="Ejemplo: gpt-4o" />
-          </label>
+            <label>
+              Descripcion del producto
+              <textarea id="descripcion-producto" name="descripcion_producto" rows="6" required></textarea>
+            </label>
 
-          <button class="primary" type="submit">Guardar cambios</button>
+            <label>
+              Contexto del curso, unidades y sesiones
+              <textarea id="contexto-curso" name="contexto_curso" rows="6" placeholder="Ejemplo: Unidad 1, sesion 2: se desarrolla el calendario comunal..."></textarea>
+            </label>
+
+            <label>
+              Ejemplo o muestra del producto esperado
+              <textarea id="ejemplo-producto" name="ejemplo_producto" rows="6" placeholder="Pega aqui un ejemplo modelo, estructura esperada o muestra de referencia."></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset class="form-section" id="sec-clasificacion">
+            <legend><span class="section-index">4</span>Programa y curso</legend>
+
+            <div class="grid-two">
+              <label>
+                Programa
+                <select id="programa-select"><option value="">Sin programa</option></select>
+              </label>
+              <label>
+                Curso
+                <select id="curso-select"><option value="">Sin curso</option></select>
+              </label>
+            </div>
+            <details class="accordion">
+              <summary>+ Nuevo programa</summary>
+              <div class="accordion-body inline-form">
+                <input type="text" id="new-programa-nombre" placeholder="Nombre del programa" />
+                <button type="button" id="new-programa-btn">Crear programa</button>
+              </div>
+            </details>
+            <details class="accordion">
+              <summary>+ Nuevo curso</summary>
+              <div class="accordion-body inline-form">
+                <label>
+                  Programa del curso
+                  <select id="new-curso-programa"></select>
+                </label>
+                <label>
+                  Course ID (curid) de Moodle
+                  <input type="number" id="new-curso-course-id" min="1" />
+                </label>
+                <button type="button" id="new-curso-btn">Buscar nombre en Moodle y guardar</button>
+                <p id="new-curso-status" class="meta-line"></p>
+              </div>
+            </details>
+          </fieldset>
+
+          <fieldset class="form-section" id="sec-contenido">
+            <legend><span class="section-index">5</span>Contenido esperado del producto</legend>
+            <div class="check-grid">
+              <label class="check-row">
+                <input id="analiza-texto" name="analiza_texto" type="checkbox" checked />
+                Texto
+              </label>
+              <label class="check-row">
+                <input id="analiza-tablas" name="analiza_tablas" type="checkbox" checked />
+                Tablas o cuadros
+              </label>
+              <label class="check-row">
+                <input id="analiza-imagenes" name="analiza_imagenes" type="checkbox" />
+                Imagenes, diagramas o capturas
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="form-section" id="sec-dependencia">
+            <legend><span class="section-index">6</span>Dependencia y validacion</legend>
+
+            <p class="meta-line">
+              Cada CMID del asistente puede depender de CMID preliminares distintos. Deja sin dependencia
+              los que no dependan de ninguno.
+            </p>
+
+            <div id="dependencias-list" class="dep-list"></div>
+
+            <details class="accordion">
+              <summary>Buscar tareas preliminares en un curso de Moodle (por codigo de aula)</summary>
+              <div class="accordion-body">
+                <div class="grid-two">
+                  <label>
+                    Codigo de aula (Course ID / curid)
+                    <input type="number" id="dep-course-id" min="1" placeholder="Ejemplo: 2440" />
+                  </label>
+                  <label>
+                    Filtrar por texto (opcional)
+                    <input type="text" id="dep-filter-text" placeholder="Ejemplo: borrador" />
+                  </label>
+                </div>
+                <button type="button" id="dep-search-btn">Buscar tareas</button>
+                <p class="meta-line">Se listan solo las actividades tipo Tarea (assign) del aula. Marca las preliminares y elige a que CMID se agregan.</p>
+                <div class="moodle-results" id="dep-results"></div>
+              </div>
+            </details>
+
+            <div class="check-grid">
+              <label class="check-row">
+                <input id="validar-documento" name="validar_documento" type="checkbox" checked />
+                Validar documento antes de retroalimentar
+              </label>
+              <label class="check-row">
+                <input id="validar-similitud" name="validar_similitud" type="checkbox" checked />
+                Validar que no repita ninguna entrega relacionada
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="form-actions">
+            <button class="primary" type="submit">Guardar cambios</button>
+          </div>
         </form>
       </section>
 
+      </div>
+      </section>
+
+      <section class="module" id="mod-pruebas" data-module-panel="pruebas" hidden>
       <section class="panel test-panel">
-        <h2>2. Probar desde Moodle</h2>
+        <div class="panel-header">
+          <div>
+            <h2>Probar desde Moodle</h2>
+            <p class="panel-subtitle">Simula el enlace que recibe el usuario final y revisa el resultado.</p>
+          </div>
+        </div>
         <form id="moodle-form">
           <div class="grid-two">
             <label>
@@ -152,24 +322,183 @@
           <pre id="result"></pre>
         </div>
       </section>
-
-      <section class="panel wide">
-        <div class="panel-header">
-          <h2>CMID configurados</h2>
-          <button id="refresh-list" type="button">Actualizar</button>
-        </div>
-        <div id="assistant-list" class="assistant-list"></div>
       </section>
 
-      <section class="panel wide">
-        <div class="panel-header">
-          <h2>Ultimas ejecuciones</h2>
-          <button id="refresh-analytics" type="button">Actualizar</button>
+      <section class="module" id="mod-reporteria" data-module-panel="reporteria" hidden>
+        <div class="panel report-filters">
+          <div class="range-presets" id="rp-presets">
+            <button type="button" data-range="hoy">Hoy</button>
+            <button type="button" data-range="7">7 dias</button>
+            <button type="button" data-range="30">30 dias</button>
+            <button type="button" data-range="90">90 dias</button>
+            <button type="button" data-range="todo" class="active">Todo</button>
+          </div>
+          <div class="filter-grid">
+            <label>Desde <input type="date" id="rp-desde" /></label>
+            <label>Hasta <input type="date" id="rp-hasta" /></label>
+            <label>Asistente <select id="rp-asistente"><option value="">Todos</option></select></label>
+            <label>Programa <select id="rp-programa"><option value="">Todos</option></select></label>
+            <label>Curso <select id="rp-curso"><option value="">Todos</option></select></label>
+            <label>Rol
+              <select id="rp-rol">
+                <option value="">Todos</option>
+                <option value="0">Usuario</option>
+                <option value="1">Validador</option>
+              </select>
+            </label>
+            <label>Estado
+              <select id="rp-estado">
+                <option value="">Todos</option>
+                <option value="success">Exitosa</option>
+                <option value="failed">Fallida</option>
+                <option value="validation_failed">Rechazada (validacion)</option>
+              </select>
+            </label>
+          </div>
+          <div class="filter-actions">
+            <button type="button" class="primary-inline" id="rp-apply">Aplicar filtros</button>
+            <button type="button" id="rp-reset">Limpiar</button>
+            <button type="button" class="secondary" id="rp-refresh">Actualizar ahora</button>
+            <a class="docs-link" id="rp-csv" href="/reportes/ejecuciones.csv">Exportar CSV</a>
+            <label class="check-row auto-refresh">
+              <input type="checkbox" id="rp-auto" checked />
+              Actualizar solo cada 60 s
+            </label>
+            <span class="updated-at" id="rp-updated">Sin actualizar</span>
+          </div>
         </div>
-        <div id="analytics-list" class="assistant-list"></div>
+
+        <nav class="subtabs" id="rp-tabs" aria-label="Secciones de reporteria">
+          <button type="button" class="active" data-rtab="resumen">Resumen de uso</button>
+          <button type="button" data-rtab="ejecuciones">Retroalimentaciones</button>
+          <button type="button" data-rtab="rubrica">Desempeno por rubrica</button>
+          <button type="button" data-rtab="sentimiento">Tono y coherencia</button>
+          <button type="button" data-rtab="valoraciones">Valoraciones de docentes</button>
+        </nav>
+
+        <div data-rpanel="resumen">
+          <div class="kpi-grid" id="rp-kpis"></div>
+          <div class="panel chart-panel">
+            <div class="panel-header">
+              <div><h3>Uso en el tiempo</h3><p class="panel-subtitle" id="rp-serie-sub"></p></div>
+              <div class="legend" id="rp-serie-legend"></div>
+            </div>
+            <div id="rp-chart-serie" class="chart"></div>
+          </div>
+          <div class="report-grid">
+            <div class="panel chart-panel"><h3>Estado de las ejecuciones</h3><div id="rp-chart-estado"></div></div>
+            <div class="panel chart-panel"><h3>Uso por hora del dia</h3><div id="rp-chart-hora" class="chart"></div></div>
+            <div class="panel chart-panel"><h3>Uso por dia de la semana</h3><div id="rp-chart-semana" class="chart"></div></div>
+          </div>
+          <div class="panel chart-panel">
+            <h3>Uso por asistente</h3>
+            <div class="table-wrap"><table id="rp-table-asistente"></table></div>
+          </div>
+          <div class="report-grid report-grid-2">
+            <div class="panel chart-panel"><h3>Uso por programa</h3><div class="table-wrap"><table id="rp-table-programa"></table></div></div>
+            <div class="panel chart-panel"><h3>Uso por curso</h3><div class="table-wrap"><table id="rp-table-curso"></table></div></div>
+          </div>
+          <div class="panel chart-panel">
+            <h3>Motivos de error y rechazo mas frecuentes</h3>
+            <div id="rp-errores"></div>
+          </div>
+        </div>
+
+        <div data-rpanel="ejecuciones" hidden>
+          <div class="panel">
+            <div class="panel-header">
+              <div><h3>Retroalimentaciones generadas</h3><p class="panel-subtitle" id="rp-runs-sub"></p></div>
+              <div class="runs-tools">
+                <input type="text" id="rp-runs-q" placeholder="Buscar docente, usuario, CMID, asistente..." />
+                <select id="rp-runs-sent">
+                  <option value="">Todo sentimiento</option>
+                  <option value="positivo">Positivo</option>
+                  <option value="neutral">Neutral</option>
+                  <option value="negativo">Negativo</option>
+                </select>
+              </div>
+            </div>
+            <div class="table-wrap"><table id="rp-runs-table" class="runs-table"></table></div>
+            <div class="pager" id="rp-runs-pager"></div>
+          </div>
+        </div>
+
+        <div data-rpanel="rubrica" hidden>
+          <div class="report-grid report-grid-2">
+            <div class="panel chart-panel"><h3>Niveles obtenidos (todas las evaluaciones)</h3><div id="rp-niveles"></div></div>
+            <div class="panel chart-panel"><h3>Puntaje promedio por dimension</h3><div id="rp-dimensiones"></div></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-header">
+              <div><h3>Criterios con menor desempeno</h3><p class="panel-subtitle">Ordenados del puntaje promedio mas bajo al mas alto (escala 1 a 4).</p></div>
+              <input type="text" id="rp-criterios-q" placeholder="Filtrar criterio o asistente..." />
+            </div>
+            <div class="table-wrap"><table id="rp-table-criterios"></table></div>
+          </div>
+        </div>
+
+        <div data-rpanel="sentimiento" hidden>
+          <div class="panel sentiment-head">
+            <div>
+              <h3>Tono y coherencia de la retroalimentacion</h3>
+              <p class="panel-subtitle">Un modelo lee cada retroalimentacion y la compara con los niveles reales de la rubrica para detectar si el texto elogia o critica mas de lo que el desempeno justifica.</p>
+              <p class="panel-subtitle" id="rp-sent-sub"></p>
+            </div>
+            <button type="button" class="primary-inline" id="rp-sent-run">Analizar pendientes</button>
+          </div>
+          <div class="report-grid">
+            <div class="panel chart-panel"><h3>Coherencia con la rubrica</h3><div id="rp-coh-dist"></div></div>
+            <div class="panel chart-panel"><h3>Sentimiento del texto</h3><div id="rp-sent-dist"></div></div>
+            <div class="panel chart-panel"><h3>Tono de la retroalimentacion</h3><div id="rp-sent-tonos"></div></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-header">
+              <div><h3>Alertas de coherencia</h3><p class="panel-subtitle">Retroalimentaciones cuyo tono no coincide con el desempeno: <b>indulgente</b> (elogia mas de lo que corresponde) o <b>severa</b> (critica mas de lo que corresponde).</p></div>
+            </div>
+            <div class="table-wrap"><table id="rp-coh-alertas"></table></div>
+          </div>
+          <div class="report-grid report-grid-2">
+            <div class="panel chart-panel"><h3>Sentimiento promedio</h3><div id="rp-sent-gauge"></div></div>
+            <div class="panel chart-panel">
+              <h3>Evolucion del sentimiento promedio</h3>
+              <div id="rp-sent-serie" class="chart"></div>
+            </div>
+          </div>
+          <div class="report-grid report-grid-2">
+            <div class="panel chart-panel"><h3>Fortalezas mas frecuentes</h3><div id="rp-sent-fortalezas"></div></div>
+            <div class="panel chart-panel"><h3>Oportunidades de mejora mas frecuentes</h3><div id="rp-sent-mejoras"></div></div>
+          </div>
+        </div>
+
+        <div data-rpanel="valoraciones" hidden>
+          <div class="kpi-grid" id="rp-val-kpis"></div>
+          <div class="report-grid report-grid-2">
+            <div class="panel chart-panel"><h3>Distribucion de valoraciones</h3><div id="rp-val-dist"></div></div>
+            <div class="panel chart-panel"><h3>Valoracion por asistente</h3><div class="table-wrap"><table id="rp-val-asistente"></table></div></div>
+          </div>
+          <div class="panel chart-panel">
+            <h3>Comentarios recientes de los docentes</h3>
+            <div id="rp-val-comentarios"></div>
+          </div>
+        </div>
       </section>
     </main>
 
-    <script src="/static/app.js"></script>
+    <aside class="drawer" id="rp-drawer" hidden>
+      <div class="drawer-backdrop" data-close-drawer></div>
+      <div class="drawer-panel" role="dialog" aria-label="Detalle de la retroalimentacion">
+        <div class="drawer-head">
+          <h3 id="rp-drawer-title">Detalle</h3>
+          <button type="button" data-close-drawer>Cerrar</button>
+        </div>
+        <div class="drawer-body" id="rp-drawer-body"></div>
+      </div>
+    </aside>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+    <script src="/static/modulos.js?v=1"></script>
+    <script src="/static/app.js?v=14"></script>
+    <script src="/static/reportes.js?v=3"></script>
   </body>
 </html>

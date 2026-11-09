@@ -1,7 +1,8 @@
 # Asistente de Retroalimentacion para Productos Moodle
 
-Servicio FastAPI para crear asistentes de retroalimentacion por `cmid` de Moodle. Cada asistente guarda:
+Servicio FastAPI para crear asistentes de retroalimentacion. Cada asistente tiene un ID interno propio y puede aplicar a **uno o varios `cmid`** de Moodle (por ejemplo, el mismo producto repetido en distintos cursos). Cada asistente guarda:
 
+- uno o mas `cmid` de Moodle a los que aplica
 - descripcion del producto
 - contexto del curso, unidades y sesiones
 - ejemplo o muestra del producto esperado
@@ -9,6 +10,9 @@ Servicio FastAPI para crear asistentes de retroalimentacion por `cmid` de Moodle
 - rubrica
 - perfil/orientaciones de retroalimentacion
 - configuracion opcional del modelo
+- Programa y/o Curso a los que pertenece (catalogos configurables desde el gestor)
+
+Un mismo `cmid` solo puede pertenecer a un asistente a la vez.
 
 El endpoint principal procesa un producto desde Moodle:
 
@@ -67,15 +71,17 @@ El gestor entra a:
 http://localhost:7001/gestor
 ```
 
-Desde esa vista configura previamente cada actividad de Moodle por `cmid`:
+Desde esa vista configura previamente cada asistente:
 
+- uno o varios `cmid` de Moodle a los que aplica (escritos a mano o agregados desde un buscador de actividades por `course_id`)
 - descripcion del producto
 - contexto del curso, unidades y sesiones donde se desarrolla la base conceptual del producto
 - ejemplo o muestra del producto esperado
 - checks de contenido esperado: texto, tablas/cuadros, imagenes
-- dependencia opcional de otro `cmid`
-- validacion previa del documento y similitud con entrega relacionada
-- rubrica
+- Programa y/o Curso a los que pertenece (con sus propios catalogos, creables desde la misma vista)
+- dependencia opcional de uno o varios `cmid` preliminares/relacionados (tambien con buscador de Moodle)
+- validacion previa del documento y similitud con cada entrega relacionada
+- rubrica (se puede generar un borrador con IA a partir de documentos de evidencia en PDF o Word)
 - perfil de retroalimentacion
 - deployment de Azure OpenAI opcional
 
@@ -126,24 +132,26 @@ Para forzar una regeneracion manual:
 &force_refresh=true
 ```
 
-### Dependencia de otro CMID
+### Dependencia de uno o varios CMID relacionados
 
 Cada asistente puede marcar:
 
 ```json
 {
   "usa_cmid_relacionado": true,
-  "cmid_relacionado": 100,
+  "cmids_relacionados": [100, 101],
   "validar_similitud": true
 }
 ```
 
-Cuando esta activo, el sistema descarga tambien la entrega del `cmid_relacionado` para el mismo `user_id` y `course_id`. Luego:
+Cuando esta activo, el sistema descarga tambien la entrega de cada `cmid` en `cmids_relacionados` para el mismo `user_id` y `course_id`. Luego, para cada una:
 
 - compara la entrega anterior con la actual
 - calcula similitud
-- valida que la nueva entrega no sea una repeticion
-- orienta la retroalimentacion como continuidad o mejora respecto a la entrega anterior
+- valida que la nueva entrega no sea una repeticion de ninguna de ellas
+- orienta la retroalimentacion como continuidad o mejora respecto a esas entregas preliminares
+
+La similitud maxima entre todas las relacionadas es la que se usa para la validacion global.
 
 ### Validacion previa
 
@@ -191,7 +199,7 @@ python scripts/seed_demo.py
 Luego prueba:
 
 ```text
-http://localhost:7001/asistentes/194522
+http://localhost:7001/asistentes/por-cmid/194522
 ```
 
 ## Como crear tu primer asistente real
@@ -260,28 +268,33 @@ Primero prueba desde la vista del gestor con `Probar desde Moodle`. Esa prueba u
 ### Crear asistente
 
 ```http
-POST /asistentes/{cmid}
+POST /asistentes
 Content-Type: application/json
 ```
 
-Si el `cmid` ya existe, devuelve `409 Conflict`. En ese caso se debe cargar y editar la configuracion existente.
+El asistente recibe un `id` autogenerado. Si alguno de los `cmids` (o `cmids_relacionados`) ya esta asignado a otro asistente, devuelve `409 Conflict`.
 
 ### Editar asistente
 
 ```http
-PUT /asistentes/{cmid}
+PUT /asistentes/{id}
 Content-Type: application/json
 ```
 
 ```json
 {
   "nombre": "Calendario comunal EIB",
+  "cmids": [194522, 194600],
   "descripcion_producto": "El calendario comunal es una herramienta pedagogica...",
   "contexto_curso": "Unidad 1, sesion 2: se desarrolla el calendario comunal...",
   "ejemplo_producto": "Ejemplo de referencia: calendario organizado por epocas...",
   "analiza_texto": true,
   "analiza_tablas": true,
   "analiza_imagenes": false,
+  "usa_cmid_relacionado": false,
+  "cmids_relacionados": [],
+  "programa_id": 1,
+  "curso_id": 3,
   "rubrica": [
     {
       "dimension": "Estructura y organizacion del calendario comunal",
@@ -304,6 +317,44 @@ Content-Type: application/json
 }
 ```
 
+### Buscar asistente por CMID
+
+```http
+GET /asistentes/por-cmid/{cmid}
+```
+
+Util para cargar en el gestor el asistente que ya incluye ese `cmid`, sin conocer su `id`.
+
+### Generar borrador de configuracion con IA
+
+```http
+POST /asistentes/generar-borrador
+Content-Type: multipart/form-data
+```
+
+Recibe uno o varios archivos PDF o Word (`.doc` / `.docx`) (`files`) con evidencia (rubricas, ejemplos, guias) y devuelve un borrador JSON con `descripcion_producto`, `contexto_curso`, `ejemplo_producto`, `rubrica`, `perfil_retroalimentacion` y `campos_incompletos` (los campos que los documentos no permitieron completar) para revisar y ajustar antes de guardar. No guarda nada por si solo.
+
+Los `.docx` se leen directamente. Los `.doc` antiguos se convierten con Microsoft Word instalado en el servidor (via COM); si el servidor no tiene Word disponible, se devuelve un error pidiendo subir el archivo como `.docx` o `.pdf`.
+
+### Buscar actividades de un curso en Moodle
+
+```http
+GET /moodle/cursos/{course_id}/actividades?q=texto
+```
+
+Lista las actividades (`cmid`, nombre, tipo) del curso indicado, para elegir cuales agregar como `cmids` o `cmids_relacionados` de un asistente.
+
+### Programas y cursos
+
+```http
+GET /programas
+POST /programas            { "nombre": "..." }
+GET /cursos?programa_id=1
+POST /cursos                { "programa_id": 1, "course_id": 2440 }
+```
+
+Al crear un curso solo se envia el `course_id` (curid) de Moodle; el `nombre` se obtiene automaticamente desde Moodle y se guarda.
+
 ### Procesar desde Moodle
 
 ```http
@@ -313,6 +364,21 @@ GET /procesar_producto?cmid=194522&user_id=481404&course_id=2440&nombre=MARIA%20
 El servicio intentara encontrar la actividad por `cmid`, descargar el PDF entregado por `user_id`, extraer texto y tablas, enviar todo a Azure OpenAI y eliminar el archivo temporal.
 
 Cada procesamiento genera un `run_id` y queda guardado para analitica.
+
+### Modulos del gestor y reporteria
+
+El gestor (`/gestor`) esta organizado en tres modulos:
+
+- **Asistentes**: listado lateral con buscador y editor de configuracion (CMID, rubrica, IA, programa/curso, dependencias).
+- **Pruebas**: simula el enlace que recibe el usuario final.
+- **Reporteria**: tablero con filtros (fechas, asistente, programa, curso, rol, estado) y cuatro secciones:
+  - *Resumen de uso*: ejecuciones, tasa de exito, usuarios unicos y recurrentes, consultas guardadas (reaperturas de una retroalimentacion ya generada), tiempos, tokens, uso por dia/hora/dia de semana, por asistente/programa/curso y motivos de error o rechazo.
+  - *Retroalimentaciones*: tabla paginada con buscador y detalle completo (texto entregado, evaluacion por criterio, validacion, eventos, sentimiento). Se puede exportar a CSV.
+  - *Desempeno por rubrica*: niveles obtenidos, puntaje por dimension y criterios con menor desempeno.
+  - *Tono y coherencia*: el boton "Analizar pendientes" usa Azure OpenAI para clasificar el sentimiento y el tono de cada retroalimentacion, extraer fortalezas y oportunidades de mejora recurrentes y, sobre todo, comparar el texto con los niveles reales de la rubrica: **alineada**, **indulgente** (elogia mas de lo que el desempeno justifica) o **severa**. Las indulgentes y severas aparecen como alertas con su motivo. El resultado se guarda en `runsentiment`, por lo que cada retroalimentacion se analiza una sola vez.
+  - *Valoraciones de docentes*: en la pagina de la retroalimentacion el docente puede responder "¿Te fue util?" (1 a 5 estrellas y comentario opcional; una valoracion por retroalimentacion, editable). La reporteria muestra promedio, distribucion, tasa de respuesta, valoracion por asistente y los comentarios recientes. No aparece para el rol Validador. Endpoints: `GET/PUT /retroalimentaciones/{run_id}/valoracion` (el `user_id` debe coincidir con el de la ejecucion). Tabla: `feedbackrating`.
+
+Endpoints: `GET /reportes/resumen`, `GET /reportes/ejecuciones`, `GET /reportes/ejecuciones/{run_id}`, `GET /reportes/ejecuciones.csv` y `POST /reportes/sentimiento/analizar` (todos aceptan `desde`, `hasta`, `assistant_id`, `programa_id`, `curso_id`, `cmid`, `rol`, `estado`). Las fechas se agrupan en hora de Lima y solo se consideran ejecuciones originadas desde Moodle. Tablas nuevas: `runsentiment` y `processingview`.
 
 ### Analitica y logs
 

@@ -67,18 +67,82 @@ class MoodleClient:
             raise MoodleDownloadError(payload.get("message", "Error de Moodle."))
         return payload
 
+    async def _get_course_contents(self, client: httpx.AsyncClient, course_id: int) -> list[dict]:
+        contents = await self._call(client, "core_course_get_contents", {"courseid": course_id})
+        if not isinstance(contents, list):
+            raise MoodleDownloadError(f"Moodle no devolvio contenidos validos para el curso {course_id}.")
+        return contents
+
     async def _find_course_module(
         self,
         client: httpx.AsyncClient,
         course_id: int,
         cmid: int,
     ) -> dict:
-        contents = await self._call(client, "core_course_get_contents", {"courseid": course_id})
+        contents = await self._get_course_contents(client, course_id)
         for section in contents:
             for module in section.get("modules", []):
                 if int(module.get("id", 0)) == cmid:
                     return module
         raise MoodleDownloadError(f"No se encontro el cmid {cmid} en el curso {course_id}.")
+
+    async def list_course_activities(self, course_id: int, only_tasks: bool = True) -> list[dict]:
+        if not self.token or self.token.strip().lower().startswith("coloca_"):
+            raise MoodleDownloadError("Falta configurar un MOODLE_TOKEN real en .env.")
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            contents = await self._get_course_contents(client, course_id)
+
+        activities: list[dict] = []
+        for section in contents:
+            for module in section.get("modules", []):
+                cmid = module.get("id")
+                if cmid is None:
+                    continue
+                modname = module.get("modname")
+                if only_tasks and modname != "assign":
+                    continue
+                activities.append(
+                    {
+                        "cmid": int(cmid),
+                        "name": module.get("name") or f"Modulo {cmid}",
+                        "modname": modname,
+                        "section": section.get("name"),
+                    }
+                )
+        return activities
+
+    async def get_course_name(self, course_id: int) -> str:
+        if not self.token or self.token.strip().lower().startswith("coloca_"):
+            raise MoodleDownloadError("Falta configurar un MOODLE_TOKEN real en .env.")
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            course = await self._find_course_by_field(client, course_id)
+        name = course.get("fullname") or course.get("shortname") or course.get("displayname")
+        if not name:
+            raise MoodleDownloadError(f"Moodle no devolvio un nombre para el curso {course_id}.")
+        return name
+
+    async def _find_course_by_field(self, client: httpx.AsyncClient, course_id: int) -> dict:
+        """Busca los datos de un curso. Distintos tokens de Moodle tienen permitidas distintas
+        wsfunction para esto, asi que se intenta con varias antes de fallar."""
+        try:
+            payload = await self._call(
+                client,
+                "core_course_get_courses_by_field",
+                {"field": "id", "value": course_id},
+            )
+            courses = payload.get("courses") if isinstance(payload, dict) else None
+            if courses:
+                return courses[0]
+        except MoodleDownloadError:
+            pass
+
+        courses = await self._call(client, "core_course_get_courses", {"options[ids][0]": course_id})
+        if isinstance(courses, list) and courses:
+            return courses[0]
+
+        raise MoodleDownloadError(f"Moodle no encontro el curso con course_id {course_id}.")
 
     async def _find_submission_file_url(
         self,

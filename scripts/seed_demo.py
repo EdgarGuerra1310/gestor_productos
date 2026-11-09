@@ -7,7 +7,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.database import create_db_and_tables, engine
 from app.schemas import AssistantConfigIn
-from app.services.assistant_manager import upsert_assistant
+from app.services.assistant_manager import create_assistant, find_assistant_by_cmid, update_assistant
 
 
 DEMO_CMID = 194522
@@ -17,6 +17,7 @@ def main() -> None:
     create_db_and_tables()
     payload = AssistantConfigIn(
         nombre="Calendario comunal EIB",
+        cmids=[DEMO_CMID],
         descripcion_producto=(
             "El calendario comunal es una herramienta pedagogica fundamental en Educacion Inicial EIB "
             "para ambito rural. Organiza actividades socioculturales y socioproductivas de la comunidad, "
@@ -39,7 +40,7 @@ def main() -> None:
         analiza_tablas=True,
         analiza_imagenes=False,
         usa_cmid_relacionado=False,
-        cmid_relacionado=None,
+        cmids_relacionados=[],
         validar_documento=True,
         validar_similitud=True,
         rubrica=[
@@ -166,9 +167,13 @@ def main() -> None:
     )
 
     with Session(engine) as session:
-        upsert_assistant(session, DEMO_CMID, payload)
+        existing = find_assistant_by_cmid(session, DEMO_CMID)
+        if existing is None:
+            assistant = create_assistant(session, payload)
+        else:
+            assistant = update_assistant(session, existing.id, payload)
 
-    print(f"Asistente demo creado para cmid={DEMO_CMID}")
+    print(f"Asistente demo creado/actualizado con id={assistant.id} para cmid={DEMO_CMID}")
 
 
 if __name__ == "__main__":

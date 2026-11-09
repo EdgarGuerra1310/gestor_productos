@@ -1,5 +1,6 @@
 {
   "nombre": "Calendario comunal EIB",
+  "cmids": [194522],
   "descripcion_producto": "El calendario comunal es una herramienta pedagogica fundamental en Educacion Inicial EIB para ambito rural. Organiza actividades socioculturales y socioproductivas de la comunidad, saberes asociados, problemas del contexto y aliados posibles. Sirve como insumo para una planificacion curricular pertinente y para promover dialogo de saberes.",
   "contexto_curso": "Unidad 1, sesion 2: se aborda el calendario comunal como herramienta para recoger actividades socioculturales y socioproductivas, saberes comunitarios, problemas del contexto y aliados. Se relaciona con la planificacion curricular pertinente y el dialogo de saberes en Educacion Inicial EIB.",
   "ejemplo_producto": "Ejemplo de referencia: un calendario organizado por epocas o meses, con columnas para actividades de la comunidad, saberes asociados, problemas o potencialidades, aliados y posibilidades pedagogicas. Debe evidenciar actividades como siembra, cosecha, festividades, preparacion de alimentos u otras practicas propias de la comunidad.",
@@ -7,7 +8,7 @@
   "analiza_tablas": true,
   "analiza_imagenes": false,
   "usa_cmid_relacionado": false,
-  "cmid_relacionado": null,
+  "cmids_relacionados": [],
   "validar_documento": true,
   "validar_similitud": true,
   "rubrica": [
