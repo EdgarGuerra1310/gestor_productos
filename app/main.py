@@ -1199,7 +1199,7 @@ def _loading_to_html(
       function renderError(message, runId) {{
         resultPanel.innerHTML = `
           <h2>{escape(nombre)}</h2>
-          ${{runId ? `<p class="meta-line">ID de ejecucion: ${{escapeHtml(runId)}}</p>` : ""}}
+          <!-- ${{runId ? `<p class="meta-line">ID de ejecucion: ${{escapeHtml(runId)}}</p>` : ""}} -->
           <p class="error-text">${{escapeHtml(message)}}</p>
         `;
       }}
