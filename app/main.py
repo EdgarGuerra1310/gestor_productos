@@ -818,7 +818,7 @@ def _validate_before_feedback(
         _reject_validation(
             session,
             run,
-            "El documento no contiene suficiente informacion legible para validar el producto. No se dara retroalimentacion.",
+            "El documento no contiene suficiente información legible para validar el producto. No se dará retroalimentación.",
             total_timer,
             relevance_score=0,
             similarity_score=max_similarity_score,
@@ -883,7 +883,7 @@ def _validate_before_feedback(
         _reject_validation(
             session,
             run,
-            f"No se dara retroalimentacion: {validation.reason}",
+            f"No se dará retroalimentación: {validation.reason}",
             total_timer,
             relevance_score=validation.relevance_score,
             similarity_score=validation.similarity_score or max_similarity_score,
@@ -1283,7 +1283,7 @@ def _result_to_html(result: ProcessingResult) -> str:
     <main class="single-page">
       <section class="panel user-result-panel">
         <h2>{escape(result.nombre)}</h2>
-        <p class="meta-line">ID de ejecucion: {result.run_id}</p>
+        <!-- <p class="meta-line">ID de ejecucion: {result.run_id}</p> -->
         {cache_line}
         <p class="meta-line">Rol: {"Validador" if result.role == 1 else "Usuario"} &middot; Validacion: {"rechazada" if result.validation_passed is False else "aprobada"}{f" &middot; Similitud: {result.similarity_score}" if result.similarity_score is not None else ""}</p>
         <p class="meta-line">Tiempo total: {result.total_ms or 0} ms</p>
